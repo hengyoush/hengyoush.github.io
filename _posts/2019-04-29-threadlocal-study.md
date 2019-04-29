@@ -2,7 +2,7 @@
 layout: post
 title:  "JDK源码:ThreadLocal解析"
 date:   2019-04-29 18:11:00 +0700
-categories: [java, jdk源码]
+categories: [java, jdk]
 ---
 
 ## 概述
