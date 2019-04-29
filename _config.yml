@@ -3,7 +3,7 @@ description: My Personal Stack Problems
 author: Heng youhai
 github: https://github.com/agusmakmun
 about: I'm Programmer for Java. I'm also studing Golang.
-disqus_shortname: stackproblems
+disqus_shortname: hengyoush
 google_analytics: UA-XXXXXXXX-Y
 avatar_url: /static/img/avatar.jpg
 
@@ -16,14 +16,6 @@ collections:
     permalink: /project/:path/
 
 social:
-    - icon: fa-facebook
-      link: "#"
-    - icon: fa-twitter
-      link: "#"
-    - icon: fa-linkedin
-      link: "#"
-    - icon: fa-stack-exchange
-      link: "#"
     - icon: fa-github
       link: "https://github.com/hengyoush"
 
