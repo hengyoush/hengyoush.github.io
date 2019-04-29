@@ -8,7 +8,7 @@ categories: [java, jdk源码]
 ## 概述
 每一个 **ThreadLocal** ,存放在线程对象中的 **threadLocals** 变量中, **threadLocals** 是一个 **ThreadLocalMap** 类型的变量.
 **ThreadLocalMap** 是一个键值对的集合类型,与 **HashMap** 不同的是,它采用线性探测法解决冲突;而且其 **Entry** 继承 **WeakReference**:
-```
+```java
 static class Entry extends WeakReference<ThreadLocal<?>> {
 		/** The value associated with this ThreadLocal. */
 		Object value;
@@ -24,7 +24,7 @@ static class Entry extends WeakReference<ThreadLocal<?>> {
 下面我们看一下 **ThreadLocalMap** 的具体实现吧!
 
 ## getEntry方法
-```
+```java
 private Entry getEntry(ThreadLocal<?> key) {
 	int i = key.threadLocalHashCode & (table.length - 1);
 	Entry e = table[i];
@@ -44,7 +44,7 @@ getEntryAfterMiss方法必须根据线性探测法的特性向后寻找相等的
 
 #### getEntryAfterMiss方法解析
 首先看下源码:
-```
+```java
 private Entry getEntryAfterMiss(ThreadLocal<?> key, int i, Entry e) {
 	Entry[] tab = table;
 	int len = tab.length;
@@ -83,7 +83,7 @@ set方法有可能会遇到冲突,根据线性探测法,其实现应该调用 **
 同时,由于可能entry数组大小超过了 **capacity * threshold** , 需要 **resize** ,这也是需要考虑的.
 
 #### Let us 解析!
-```
+```java
 private void set(ThreadLocal<?> key, Object value) {
 	Entry[] tab = table;
 	int len = tab.length;
@@ -112,7 +112,7 @@ private void set(ThreadLocal<?> key, Object value) {
 接下来我们看一下 **replaceStaleEntry** 的实现.
 
 #### replaceStaleEntry解析
-```
+```java
 private void replaceStaleEntry(ThreadLocal<?> key, Object value,
 							   int staleSlot) {
 	Entry[] tab = table;
@@ -170,7 +170,7 @@ private void replaceStaleEntry(ThreadLocal<?> key, Object value,
 ## 槽的清理
 
 #### expungeStaleEntry方法解析
-```
+```java
 private int expungeStaleEntry(int staleSlot) {
 	Entry[] tab = table;
 	int len = tab.length;
@@ -215,7 +215,7 @@ private int expungeStaleEntry(int staleSlot) {
 3. 返回staleSlot之后的null slot.
 
 #### cleanSomeSlots方法解析
-```
+```java
 private boolean cleanSomeSlots(int i, int n) {
 	boolean removed = false;
 	Entry[] tab = table;
