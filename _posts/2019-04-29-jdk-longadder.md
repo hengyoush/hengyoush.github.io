@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "JDK源码:LongAdder与Striped64解析"
-date:   2019-04-29 18:11:00 +0700
+date:   2019-04-29 18:12:00 +0700
 categories: [java, jdk]
 ---
 
@@ -19,7 +19,7 @@ LongAdder继承自**Striped64**类,该类实现了主要的功能逻辑.
 
 ## 主要流程
 首先,我们介绍以下与**Striped64**中计数相关的属性:
-```
+```java
 // 每个cell里面有一个long,线程在cell上进行累加
 transient volatile Cell[] cells;
 // 当不存在冲突时或者作为存在冲突时的一个后备选择,base用作累加的目标
@@ -36,7 +36,7 @@ transient volatile int cellsBusy;
 5. 重新计算hash值,重复2
 
 ## 具体实现
-```
+```java
 final void longAccumulate(long x, LongBinaryOperator fn,
 						  boolean wasUncontended) {
 	int h;
@@ -110,7 +110,7 @@ final void longAccumulate(long x, LongBinaryOperator fn,
 }
 ```
 
-```
+```java
 public void add(long x) {
 	Cell[] cs; long b, v; int m; Cell c;
 	if ((cs = cells) != null || !casBase(b = base, b + x)) {
@@ -129,7 +129,7 @@ public void add(long x) {
 
 #### 关于sum方法
 LongAdder的sum方法返回的不是一个快照值,如下:
-```
+```java
 public long sum() {
 	Cell[] cs = cells;
 	long sum = base;
