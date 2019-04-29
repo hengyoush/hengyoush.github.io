@@ -30,6 +30,8 @@ urls:
       url: /projects/
     - text: XML Feed
       url: /feed.xml
+    - text: Category
+      url: /category/java
 
 url: "https://hengyoush.github.io"
 baseurl: ""
