@@ -91,6 +91,8 @@ docker run helloworld
 hello world
 ```
 
+*※ 注意`Dockerfile`中的每个`COPY`, `ADD`, `RUN`命令都会在原先的镜像上新加`layer（层）`，所以尽量减少这类型的命令可以压缩镜像的大小，便于分发，下面介绍的Multistage-build的方式可以有效解决这种问题*
+
 #### Dockerfile基本命令参考
 命令 | 说明 | 例子
 -|-|-
@@ -101,9 +103,109 @@ RUN | 执行一个命令 | `RUN apt-get update`
 CMD | 容器的默认执行命令 | `CMD ["/bin/echo", "hello world"]`
 EXPOSE | 指示这个容器监听的端口 | `EXPOSE 8080`
 
+#### 使用Dockerfile构建Java应用镜像
+使用如下命令创建一个Java工程：
+```
+mvn archetype:generate -DgroupId=org.examples.java -DartifactId=helloworld -DinteractiveMode=false
+```
+使用`mvn package`build工程。
+
+然后在工程目录下创建Dockerfile，内容如下：
+```Dockerfile
+FROM openjdk:latest
+
+COPY target/helloworld-1.0-SNAPSHOT.jar /usr/src/helloworld-1.0-SNAPSHOT.jar
+
+CMD java -cp /usr/src/helloworld-1.0-SNAPSHOT.jar org.examples.java.App
+```
+然后执行`docker build`命令创建镜像：
+```
+docker image build . -t hello-java:latest
+```
+
+build成功之后执行`docker run`命令运行该镜像：
+```
+docker container run hello-java:latest
+```
+
+控制台会输出：
+```
+Hello World!
+```
+
 #### 使用maven插件创建Java应用镜像
 
 ##### docker-maven-plugin
+我们复用上一节创建的pom文件，在pom文件中加入以下配置：
+```xml
+<profiles>
+        <profile>
+            <id>docker</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>io.fabric8</groupId>
+                        <artifactId>docker-maven-plugin</artifactId>
+                        <version>0.20.1</version>
+                        <configuration>
+                            <images>
+                                <image>
+                                    <name>hellojava</name>
+                                    <build>
+                                        <from>adoptopenjdk/openjdk8</from>
+                                        <assembly>
+                                            <descriptorRef>artifact</descriptorRef>
+                                        </assembly>
+                                        <cmd>java -jar maven/${project.name}-${project.version}.jar</cmd>
+                                    </build>
+                                    <run>
+                                        <wait>
+                                            <log>Hello World!</log>
+                                        </wait>
+                                    </run>
+                                </image>
+                            </images>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>docker:build</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>docker:start</id>
+                                <phase>install</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                    <goal>logs</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+```
+然后在工程目录下执行：
+```
+mvn -f pom.xml pakcage -Pdocker
+```
+
+输出如下：
+```
+[INFO] DOCKER> [hellojava:latest]: Created docker-build.tar in 189 milliseconds
+[INFO] DOCKER> [hellojava:latest]: Built image sha256:6215c
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+```
+
+然后使用`docker images`查看构建的镜像：
+```
+REPOSITORY              TAG                 IMAGE ID            CREATED             SIZE
+hellojava               latest              6215ccdcb0d8        2 minutes ago       305MB
+```
 
 ##### Jib
 
