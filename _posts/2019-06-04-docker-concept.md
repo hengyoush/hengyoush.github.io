@@ -33,8 +33,12 @@ Linux Namespaces：让每个进程只看到系统的“个人视角”，包括�
 
 Linux Control Groups（cgroups）：限制了一个进程可以消耗的系统资源，包括CPU，内存，网络带宽等等。
 
+---
+
 ## 为什么使用Docker
 TODO
+
+---
 
 ## 创建镜像
 Docker通过从*Dockerfile*的文件中读取指令构建镜像。下面来介绍如何使用Dockerfile构建镜像。
@@ -211,6 +215,8 @@ hellojava               latest              6215ccdcb0d8        2 minutes ago   
 
 
 ##### multi-stage build
+
+---
 
 ## 核心概念
 
