@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "使用minikube在Kubernetes上运行第一个应用"
+title:  "Kubernetes学习: 使用minikube在Kubernetes上运行第一个应用"
 date:   2019-06-02 13:47:00 +0700
 categories: [k8s, docker]
 ---

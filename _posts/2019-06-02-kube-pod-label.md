@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Kubernetes学习: 使用label管理pod"
-date:   2019-06-02 13:47:00 +0700
+date:   2019-06-02 15:39:00 +0700
 categories: [k8s]
 ---
 
