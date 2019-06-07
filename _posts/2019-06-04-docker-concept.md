@@ -33,6 +33,20 @@ Linux Namespaces：让每个进程只看到系统的“个人视角”，包括�
 
 Linux Control Groups（cgroups）：限制了一个进程可以消耗的系统资源，包括CPU，内存，网络带宽等等。
 
+#### Docker的组成
+Docker Engine的组成如下所示:
+- 一个后台运行的守护进程
+- 一个REST API接口用于接收客户端发来的REST请求
+- 一个CLI命令行工具
+
+![avatar](../static/img/engine-components-flow.png)
+<br>
+<br>
+下面这张图片则展示了docker的总体架构:
+![avatar](../static/img/architecture.svg)
+
+docker使用C/S结构, docker client与docker daemon交互, docker daemon负责构建、运行和分发Docker容器。Docker客户机和守护进程可以运行在同一个系统上，也可以将Docker客户机连接到远程Docker守护进程。Docker客户机和守护进程使用REST API通过UNIX套接字或网络接口进行通信。
+
 ---
 
 ## 为什么使用Docker
@@ -98,14 +112,14 @@ hello world
 *※ 注意`Dockerfile`中的每个`COPY`, `ADD`, `RUN`命令都会在原先的镜像上新加`layer（层）`，所以尽量减少这类型的命令可以压缩镜像的大小，便于分发，下面介绍的Multistage-build的方式可以有效解决这种问题*
 
 #### Dockerfile基本命令参考
-命令 | 说明 | 例子
--|-|-
-FROM | Dockerfile的第一个指令 | `FROM ubuntu`
-COPY | 拷贝文件到容器内部的指定路径 | `COPY .bash_profile /home`
-ENV | 给容器设置环境变量 | `ENV HOSTNAME=host`
-RUN | 执行一个命令 | `RUN apt-get update`
-CMD | 容器的默认执行命令 | `CMD ["/bin/echo", "hello world"]`
-EXPOSE | 指示这个容器监听的端口 | `EXPOSE 8080`
+| 命令   | 说明                         | 例子                               |
+|--------|------------------------------|------------------------------------|
+| FROM   | Dockerfile的第一个指令       | `FROM ubuntu`                      |
+| COPY   | 拷贝文件到容器内部的指定路径 | `COPY .bash_profile /home`         |
+| ENV    | 给容器设置环境变量           | `ENV HOSTNAME=host`                |
+| RUN    | 执行一个命令                 | `RUN apt-get update`               |
+| CMD    | 容器的默认执行命令           | `CMD ["/bin/echo", "hello world"]` |
+| EXPOSE | 指示这个容器监听的端口       | `EXPOSE 8080`                      |
 
 #### 使用Dockerfile构建Java应用镜像
 使用如下命令创建一个Java工程：
@@ -212,15 +226,274 @@ hellojava               latest              6215ccdcb0d8        2 minutes ago   
 ```
 
 ##### Jib
+Jib是google开源的基于Maven插件的docker容器构建工具, 和上面的docker-maven-plugin一样, 只要在pom文件中做相应的配置即可
+完成镜像的创建、推送等操作.
 
+首先创建一个Hello World工程:
+```
+mvn artchetype:generate
+```
 
-##### multi-stage build
+然后修改其pom文件,增加如下内容:
+```xml
+ <plugin> 
+  <groupId>com.google.cloud.tools</groupId>  
+  <artifactId>jib-maven-plugin</artifactId>  
+  <version>1.2.0</version>  
+  <configuration> 
+    <from> 
+      <image>openjdk:alpine</image>  
+      <auth> 
+        <username>hengyoush</username>  
+        <password>1179332922</password> 
+      </auth> 
+    </from>  
+    <to> 
+      <image>docker.io/hengyoush/myimage</image>  
+      <auth> 
+        <username>hengyoush</username>  
+        <password>1179332922</password> 
+      </auth> 
+    </to>  
+    <container> 
+      <jvmFlags> 
+        <jvmFlag>-Xms512m</jvmFlag>  
+        <jvmFlag>-Xdebug</jvmFlag> 
+      </jvmFlags>  
+      <mainClass>com.example.App</mainClass>  
+      <args> 
+        <arg>some</arg>  
+        <arg>args</arg> 
+      </args>  
+      <ports> 
+        <port>1000</port>  
+        <port>2000-2003/udp</port> 
+      </ports> 
+    </container> 
+  </configuration> 
+</plugin>
+```
+
+下面来逐个解释xml中对应的标签意义:
+标签名 | 标签类型 | 描述
+-|-|- 
+to | to | 通过应用构建的目标镜像配置,包括该镜像的仓库,名字以及tag等
+from | from | 配置一个基础镜像
+container | container | 容器的相关配置, 包括环境变量, jvm参数, 监听端口等
+image | string | 基础镜像, 比如openjdk:alpine
+auth | auth | 在from和to中配置, 用于拉取和推送镜像时的身份校验
+appRoot | string | 应用的内容在容器中存放的目录位置, 默认为“/app”
+jvmFlags | list | 运行应用时的JVM参数
+mainClass | string | 运行应用的main类
+args | list | 运行java应用的参数
+ports | list | 容器暴露的端口
+
+然后执行如下命令可以将镜像构建至docker daemon:
+```
+mvn compile jib:dockerBuild
+```
+
+然后执行`docker run hengyoush/myimage`命令运行镜像, 验证是否成功:
+输出如下:
+```
+Hello World!
+```
+执行`docker images`你也可以看到本地的镜像.
+
+## 常用操作
+
 
 ---
 
-## 核心概念
+## 存储
+默认情况下, 任何在容器中的文件修改操作都会在现有镜像层上的*writable container laye*上进行, 如果容器不存在了那么所有修改的数据都会丢失, 而且如果其他进程想要处理这些数据将会十分困难, 而且相对于直接写入宿主机的文件, 容器中的文件操作性能上将会消耗更多.
 
-#### 存储
+docker有两种方式处理这种情况:
+1. *Volumes*
+2. *bind mount*
 
-#### 网络
+这两种方式的差别如下所示:
+![avatar](../static/img/types-of-mounts.png)
 
+可以看到, 这两种方式对于容器来说都是一样的, 只是文件在宿主机上存在的方式不同.
+- **Volumes**是Docker管理在宿主机的`/var/lib/docker/volumes/`目录下管理的, Volumes是存储持久化文件的最佳方式.
+- **bind mount**不由Docker管理, 其文件可存在于宿主机文件系统上的任意位置.
+
+#### Volume
+相对于bind mount, volumes又如下主要优势:
+- Volumes更容易备份以及迁移
+- 可以通过Docker的命令行或者API管理Volumes.
+- Volumes可以被存储在远程主机上
+-
+
+综上所述, Volumes应该被优先考虑使用.
+
+接下来看如何创建管理Volume
+使用
+```
+docker volume create my-vol
+```
+如上创建了一个名为`my-vol`的volume.
+使用`docker volume ls`查看我们刚刚创建的volume如下:
+```
+DRIVER              VOLUME NAME
+local               my-vol
+```
+接下来使用`docker inspect`查看创建的volume的详细信息:
+```
+docker volume inspect my-vol
+```
+输出如下:
+```json
+[
+    {
+        "CreatedAt": "2019-06-07T14:50:49Z",
+        "Driver": "local",
+        "Labels": {},
+        "Mountpoint": "/var/lib/docker/volumes/my-vol/_data",
+        "Name": "my-vol",
+        "Options": {},
+        "Scope": "local"
+    }
+]
+```
+接下来可以使用`docker volume rm my-vol`来移除该volume(先别着急删).
+
+
+好了, 创建了volume, 接下来需要让一个容器挂载该volume,
+一般使用`--mount`选项挂载Volume到容器中(这个选项不仅可以挂载Volume, 还可以挂载bind mount和tmpfs)
+```
+docker run -d \
+  --name devtest \
+  --mount source=my-vol,target=/app \
+  nginx:latest
+```
+我们来解释下`--mount`各个参数的意思:
+- source: 表示挂载到volume的名称
+- target: 表示容器内部的挂载路径
+- readonly: 容器对volume只有读权限 
+
+好了, 容器运行完成, 接下来我们使用`inspect`窥探一下容器的内部,
+输出如下:
+```json
+"Mounts": [
+            {
+                "Type": "volume",
+                "Name": "my-vol",
+                "Source": "/var/lib/docker/volumes/my-vol/_data",
+                "Destination": "/app",
+                "Driver": "local",
+                "Mode": "z",
+                "RW": true,
+                "Propagation": ""
+            }
+        ]
+```
+可以看到展示了宿主机的路径和容器内的路径以及读写设置.
+
+移除volume, 执行如下命令:
+```
+docker volume prune
+```
+这样就移除了所有不使用的volume.
+
+#### Bind mount
+
+
+---
+
+## 网络
+
+docker中的网络类型:
+1. bridge: 桥接类型, 默认的网络类型
+2. host: 容器与主机之间没有任何网络隔离
+3. overlay: 用于与多个docker daemon通信, 常用于`docker swarm`中.
+4. macvlan: 通过物理网络进行通信, 会分配一个MAC地址给容器, 通常用于必须进行物理网络通信的遗留系统.
+5. none: 通常用于自定义网络类型.
+
+使用如下命令查看docker网络情况:
+```
+docker network ls
+```
+
+显示如下:
+```
+NETWORK ID          NAME                DRIVER              SCOPE
+bdd2e4a8ca3e        bridge              bridge              local
+49097dd448bb        host                host                local
+80225cb43502        none                null                local
+```
+可以看到docker内置了三种类型的网络, 我们看一下默认存在的bridge(default-bridge network)信息:
+```
+docker network inspect bridge
+```
+
+输出如下:
+```json
+[
+    {
+        "Name": "bridge",
+        "Id": "bdd2e4a8ca3e690d122c216ca7a5cf7f27468aaf3d3b112d5a0f3e1f3cf3937d",
+        "Created": "2019-06-01T11:08:04.581530358Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.17.0.0/16",
+                    "Gateway": "172.17.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Options": {
+            ...
+        },
+        "Labels": {}
+    }
+]
+```
+可以看到网关和子网掩码以及各种信息.
+
+我们现在随便运行一个镜像然后再次执行`docker network inspect bridge`命令,输出如下(部分输出):
+```json
+Containers: {
+            "75d4c6a88bf9842f3b00abaf334af1fb18d810ddb35995138acd7c1f0dc18c8e": {
+                "Name": "recursing_keller",
+                "EndpointID": "d8e12d5778a6815bc455fa153242f47feae303368f2df8ed9c46aab4c0f79651",
+                "MacAddress": "02:42:ac:11:00:02",
+                "IPv4Address": "172.17.0.2/16",
+                "IPv6Address": ""
+            }
+        }
+```
+可以看到Containers出现了一条记录, 包含了我们刚刚运行的容器的ip地址.
+
+
+一般我们在生产环境中不推荐使用默认的`default-bridge`网络, 我们最好使用自定义bridge网络(user-define bridge network),
+又如下好处:
+1. 自定义bridge网络不仅可以通过ip地址也可以通过容器名称通信(必须在同一个自定义bridge网络下), 这种能力叫做**自动服务发现**.
+2. 同一个自定义bridge网络下, 不同容器之间自动暴露所有端口, 而且对于外界网络没有暴露任何端口(使用`--publish`选项可暴露端口).
+
+运行如下命令创建自定义桥接网络:
+```
+docker network create --driver bridge alpine-net
+```
+我们创建了一个名为`alpine-net`的网络.
+
+接下来我们运行一个容器连接上这个网络如下:
+```
+docker run -dit --name alpine1 --network alpine-net alpine ash
+```
+我们使用`--network`选项指定网络`alpine-net`用于连接.
+
+*这里有详细教程: https://docs.docker.com/network/network-tutorial-standalone/*
