@@ -252,7 +252,16 @@ pod开始运行的时候, K@会初始化一系列的环境变量指向现在存�
 ```
 kubectl exec ${pod名} env
 ```
-
-
+举个例子, 有一个服务“Redis-Master“, ClusterIP是10.0.0.11, 端口暴露在6379, 那么之后创建的Pod中将会有如下环境变量:
+```properties
+REDIS_MASTER_SERVICE_HOST=10.0.0.11
+REDIS_MASTER_SERVICE_PORT=6379
+REDIS_MASTER_PORT=tcp://10.0.0.11:6379
+REDIS_MASTER_PORT_6379_TCP=tcp://10.0.0.11:6379
+REDIS_MASTER_PORT_6379_TCP_PROTO=tcp
+REDIS_MASTER_PORT_6379_TCP_PORT=6379
+REDIS_MASTER_PORT_6379_TCP_ADDR=10.0.0.11
+```
+> 注意:当你需要
 
 
