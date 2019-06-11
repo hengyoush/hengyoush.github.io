@@ -15,23 +15,23 @@ Kubernetes抽象了硬件基础设施, 使得对外暴露的是一个资源池, 
 
 简单来说, 容器技术给了我们在发布和更新应用方面上的方便和快捷, 而Kubernetes则帮助我们决定这些容器在哪里运行何时运行并且帮助它们找到所需的资源.
 
-## K@的组成
+## Kubernetes的组成
 ---
-使用K@是非常直观的，你只需要使用K@ APIl来描述集群的期望状态，希望运什么应用程序，使用什么镜像，有多少个副本，希望什么网络和磁盘资源等类似声明式的方式来操控K@集群。
+使用Kubernetes是非常直观的，你只需要使用Kubernetes APIl来描述集群的期望状态，希望运什么应用程序，使用什么镜像，有多少个副本，希望什么网络和磁盘资源等类似声明式的方式来操控Kubernetes集群。
 
 一旦你提供了所需的状态，*Kubernetes Control Plane*会自动的执行各种任务来让集群状态与你描述的一致，这包括：启动或重启容器，自动伸缩副本数量等，*Kubernetes Control Plane*由以下几个进程组成：
 - **主节点-Kubernetes Master**：运行在集群中单个节点上的进程集合，包括：kube-apiserver，kube-controller-manager 和 kube-scheduler.
 - 每个非主节点上运行着两个进程：
   - **kubelet**：与主节点通信。
-  - **kube-proxy**：将整个K@网络映射在节点上。
+  - **kube-proxy**：将整个Kubernetes网络映射在节点上。
 
 ![avatar](/static/img/K8sOverview-1.png)
 
 ## Pod
 ---
-Pod是Kubernetes中最为重要的核心概念, K@的其他对象仅仅是在管理,暴露Pod或者被Pod使用.
+Pod是Kubernetes中最为重要的核心概念, Kubernetes的其他对象仅仅是在管理,暴露Pod或者被Pod使用.
 
-一个Pod是你能创建部署的最小最简单的K@对象, 一个Pod封装了一组容器, 一个唯一的IP, Docker是在K@中应用最广泛的*容器运行时*, 但K@同时也支持其他容器运行时
+一个Pod是你能创建部署的最小最简单的Kubernetes对象, 一个Pod封装了一组容器, 一个唯一的IP, Docker是在Kubernetes中应用最广泛的*容器运行时*, 但Kubernetes同时也支持其他容器运行时
 
 ![avatar](/static/img/Pod-1.png)
 
@@ -58,14 +58,14 @@ Pod中放置这两个容器，因为它们是紧耦合的。
 
 #### 管理Pod
 ---
-一般情况下，不需要手动管理Pod，K@中有一种类型的资源叫做*Replication Controller*，由RC进行管理Pod的创建，删除，调度等，当然如果你想的话
-也可以手动建立Pod，不过手动建立的Pod在停止时不会自动重启，也失去了很多K@提供的特性，所以尽量不要手动管理Pod。
+一般情况下，不需要手动管理Pod，Kubernetes中有一种类型的资源叫做*Replication Controller*，由RC进行管理Pod的创建，删除，调度等，当然如果你想的话
+也可以手动建立Pod，不过手动建立的Pod在停止时不会自动重启，也失去了很多Kubernetes提供的特性，所以尽量不要手动管理Pod。
 
 
 
 #### Pod Template
 ---
-所有K@内的资源都以json或者yaml的形式表示，Pod也不例外，下面是一个Pod yaml的示例：
+所有Kubernetes内的资源都以json或者yaml的形式表示，Pod也不例外，下面是一个Pod yaml的示例：
 ```yaml
 apiVersion: v1
 kind: Pod
@@ -102,7 +102,7 @@ kubectl get pods
 
 #### 容器探针
 ---
-K@通过容器探针来检测容器的状态从而判断是否需要重启Pod。
+Kubernetes通过容器探针来检测容器的状态从而判断是否需要重启Pod。
 
 <br>
 探针是由Kubelet定时调度的诊断程序，Kubelet会调用一个由容器实现的Handler， 有三种Handler如下：
@@ -210,7 +210,7 @@ Deployment是一种高阶资源, 可以更加容易的更新应用程序,用于�
 
 ![avatar](/static/img/Deployment-1.png)
 
-可以看到, Deployment并不是直接管理Pod, 这看上去有些不直观, 为什么我们还要增加“复杂度”, 在ReplicaSet上再加一层? 原因主要是由于Deployment要支持滚动升级, K@的方式(之前的方式)是通过再创建一个ReplicationController并协调两个Controller使它们根据彼此不断修改, 然而这个过程可能会造成干扰所以需要另外一个资源来协调.
+可以看到, Deployment并不是直接管理Pod, 这看上去有些不直观, 为什么我们还要增加“复杂度”, 在ReplicaSet上再加一层? 原因主要是由于Deployment要支持滚动升级, Kubernetes的方式(之前的方式)是通过再创建一个ReplicationController并协调两个Controller使它们根据彼此不断修改, 然而这个过程可能会造成干扰所以需要另外一个资源来协调.
 
 #### Deployment的定义
 如下是一个Deployment的定义:
@@ -235,7 +235,7 @@ spec:
 
 ### DaemonSet
 ---
-当你希望在K@的所有工作节点上都运行一个Pod实例, 那么你可以使用DaemonSet.
+当你希望在Kubernetes的所有工作节点上都运行一个Pod实例, 那么你可以使用DaemonSet.
 下图是ReplicaSet与DaemonSet的对比图.
 
 ![avatar](/static/img/DaemonSet-1.png)
@@ -244,9 +244,9 @@ spec:
 
 ## Service
 ---
-K@的Pod的生命是短暂的, 每一个Pod都有自己的IP地址, 但是可能一个Deployment中当前运行的Pod和下一秒运行的Pod是不同的, 那么这会导致一个问题: 如果一些服务(比如说一些前端服务)依赖于另一些服务(比如说后端服务), 那么那些前台服务如何发现并且跟踪后端服务IP地址的变化呢?
+Kubernetes的Pod的生命是短暂的, 每一个Pod都有自己的IP地址, 但是可能一个Deployment中当前运行的Pod和下一秒运行的Pod是不同的, 那么这会导致一个问题: 如果一些服务(比如说一些前端服务)依赖于另一些服务(比如说后端服务), 那么那些前台服务如何发现并且跟踪后端服务IP地址的变化呢?
 
-这就需要一个服务发现机制, 我们不需要自己手动引进一个服务发现工具, K@已经给了我们开箱即用的解决方案.这就是**Services**.
+这就需要一个服务发现机制, 我们不需要自己手动引进一个服务发现工具, Kubernetes已经给了我们开箱即用的解决方案.这就是**Services**.
 
 有了Service, 可以达到服务(指应用服务)之间的解耦, 比如说一个无状态的数据处理后端，它使用3个副本运行,前端服务并不关心它们使用的是哪个后端,虽然组成后端集的实际pod可能会发生变化，但前端客户端不应该知道这一点，也不应该自己跟踪后端集。
 
@@ -307,10 +307,10 @@ subsets:
 
 ### 服务发现
 ---
-Service创建之后我们就可以通过一个单一的IP地址访问Pod, 即使后端的Pod改变了, 但是通过Service的IP我们仍然可以访问到服务.但是我们如何知道Service的IP和端口? K@为我们提供了发现Service的IP和端口的方式.
+Service创建之后我们就可以通过一个单一的IP地址访问Pod, 即使后端的Pod改变了, 但是通过Service的IP我们仍然可以访问到服务.但是我们如何知道Service的IP和端口? Kubernetes为我们提供了发现Service的IP和端口的方式.
 
 #### 通过环境变量发现服务
-pod开始运行的时候, K@会初始化一系列的环境变量指向现在存在的服务, 如果我们创建的服务早于pod的创建, 那么pod的环境变量可以根据环境变量获得服务的IP地址和端口号.
+pod开始运行的时候, Kubernetes会初始化一系列的环境变量指向现在存在的服务, 如果我们创建的服务早于pod的创建, 那么pod的环境变量可以根据环境变量获得服务的IP地址和端口号.
 
 可以执行如下命令获取pod内部的环境变量:
 ```
@@ -329,8 +329,8 @@ REDIS_MASTER_PORT_6379_TCP_ADDR=10.0.0.11
 > 注意:当你使用环境变量这种方式发现服务时， 必须保证Service启动完成之后，Pod再启动，因为只会在Pod启动的时候将环境变量注入到Pod中。
 
 #### DNS
-可以看到，使用环境变量的方式非常不灵活，幸好K@为我们提供了另一种方式：使用一个提供DNS服务的附加组件。
-DNS服务可以监视K@ API， 如果有新的Service建立，那么会在DNS record中新增一条记录，这样K@集群中的所有Pod都可以使用DNS Name来连接到Service。
+可以看到，使用环境变量的方式非常不灵活，幸好Kubernetes为我们提供了另一种方式：使用一个提供DNS服务的附加组件。
+DNS服务可以监视Kubernetes API， 如果有新的Service建立，那么会在DNS record中新增一条记录，这样Kubernetes集群中的所有Pod都可以使用DNS Name来连接到Service。
 
 例如，如果你有一个Service叫做“My-Service”，它在“my-ns”命名空间中，在“my-ns”命名空间中的Pod可以通过`"my-service"`这个DNS名称解析到IP地址，当然也可以使用`"my-service.my-ns"`。如果是其他命名空间的Pod则需要使用`"my-service.my-ns"`这个名称。
 
@@ -349,7 +349,7 @@ DNS服务可以监视K@ API， 如果有新的Service建立，那么会在DNS re
 ### Ingress--统一管理外部访问
 外部访问的解决方案已经有了，比如NodePort和LoadBalance，但是这些方案都有一个缺点那就是对于每一群Pod都要创建一个Service，那么当Service的数量增长，如何进行有效的管理？比如说使用一个IP地址和不同的路径就可以访问所有Service？
 
-K@为我们提供了一种方式：Ingress。
+Kubernetes为我们提供了一种方式：Ingress。
 Ingress将外网与service之间的HTTP路由暴露， Ingress会根据请求的主机名和路径决定请求到达的服务, 还可以提供会话亲和性等功能. 
 
 Ingress等定义实例如下:
@@ -398,7 +398,7 @@ spec: rules:
 ---
 ### Volume
 
-由于Pod从K@的概念上来说不会一直存在，因为某种原因挂掉的话，kubelet将会重启它但是容器内部的文件会丢失，另外当pod内部的容器如果需要共享文件的话也需要K@的存储功能的支持。K@的`Volume`解决了上述问题。
+由于Pod从Kubernetes的概念上来说不会一直存在，因为某种原因挂掉的话，kubelet将会重启它但是容器内部的文件会丢失，另外当pod内部的容器如果需要共享文件的话也需要Kubernetes的存储功能的支持。Kubernetes的`Volume`解决了上述问题。
 
 Volume的生命周期与Pod中的容器无关，而与Pod本身相关，当Pod被删除时，Volume中的内容才会丢失。
 
@@ -413,15 +413,15 @@ Volume的生命周期与Pod中的容器无关，而与Pod本身相关，当Pod�
 
 ![avatar](/static/img/PVPVC-1.png)
 
-首先由集群管理员创建存储,然后通过向K@ API传递PV声明创建PV.
-然后需要使用存储的用户只需要创建一个PVC, 然后K@会找到一个具有足够容量的PV将其置于访问模式, 并将PVC绑定到PV.然后用户创建一个pod并通过volume配置引用PVC.
+首先由集群管理员创建存储,然后通过向Kubernetes API传递PV声明创建PV.
+然后需要使用存储的用户只需要创建一个PVC, 然后Kubernetes会找到一个具有足够容量的PV将其置于访问模式, 并将PVC绑定到PV.然后用户创建一个pod并通过volume配置引用PVC.
 
 bar.example.com
 ## 配置
 ---
 ### 资源分配
 
-为了实现资源（这里主要指CPU和内存）被有效利用， K@采用Requests和Limit两种限制类型来对资源进行分配。
+为了实现资源（这里主要指CPU和内存）被有效利用， Kubernetes采用Requests和Limit两种限制类型来对资源进行分配。
 
 - Request：容器使用的最小资源需求，只有当工作节点的可用资源量>=Pod请求资源量时才允许将该Pod调度到该节点。
 - Limit：Pod使用资源最大值，设为0表示无上限。
@@ -432,7 +432,7 @@ Request能够保证Pod有足够的资源来运行，而Limit则是防止某个Po
 
 ![avatar](/static/img/Resource-1.png)
 
-如上图，在一个4U4G的Node上，部署了四个Pod，每个Pod的Request为1U1G，Limit为2U2G，很有可能会出现Pod占用的资源大于1U，那么此时会出现资源抢占，对于资源抢占，K@根据资源能不能进行伸缩进行分类，分为可压缩资源和不可以压缩资源。CPU资源--是现在支持的一种可压缩资源。内存资源和磁盘资源为现在支持的不可压缩资源。
+如上图，在一个4U4G的Node上，部署了四个Pod，每个Pod的Request为1U1G，Limit为2U2G，很有可能会出现Pod占用的资源大于1U，那么此时会出现资源抢占，对于资源抢占，Kubernetes根据资源能不能进行伸缩进行分类，分为可压缩资源和不可以压缩资源。CPU资源--是现在支持的一种可压缩资源。内存资源和磁盘资源为现在支持的不可压缩资源。
 
 假设四个Pod同时负载变高，CPU使用量超过1U，这个时候每个Pod将会按照各自的Request设置按比例分占CPU调度的时间片。在示例中，由于4个Pod设置的Request都为1U，发生资源抢占时，每个Pod分到的CPU时间片为1U/(1U×4)，实际占用的CPU核数为1U。在抢占发生时，Limit的值对CPU时间片的分配为影响，在本例中如果条件容器Limit值的设置，抢占情况下CPU分配的比例保持不变。
 
