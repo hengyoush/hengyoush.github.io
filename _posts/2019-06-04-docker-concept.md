@@ -43,6 +43,7 @@ Docker Engine的组成如下所示:
 <br>
 <br>
 下面这张图片则展示了docker的总体架构:
+
 ![avatar](/static/img/architecture.svg)
 
 docker使用C/S结构, docker client与docker daemon交互, docker daemon负责构建、运行和分发Docker容器。Docker客户机和守护进程可以运行在同一个系统上，也可以将Docker客户机连接到远程Docker守护进程。Docker客户机和守护进程使用REST API通过UNIX套接字或网络接口进行通信。

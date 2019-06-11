@@ -416,7 +416,6 @@ Volume的生命周期与Pod中的容器无关，而与Pod本身相关，当Pod�
 首先由集群管理员创建存储,然后通过向Kubernetes API传递PV声明创建PV.
 然后需要使用存储的用户只需要创建一个PVC, 然后Kubernetes会找到一个具有足够容量的PV将其置于访问模式, 并将PVC绑定到PV.然后用户创建一个pod并通过volume配置引用PVC.
 
-bar.example.com
 ## 配置
 ---
 ### 资源分配
