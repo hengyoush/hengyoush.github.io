@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Kubernetes简介以及基本使用"
+title:  "Kubernetes概念简介"
 date:   2019-06-09 13:47:00 +0700
 categories: [k8s]
 ---
@@ -120,14 +120,39 @@ RestartPolicy用于确定容器因为存活探针诊断失败而被kill之后的
 上面说了， 我们一般不会直接管理Pod， 而是通过*Controller*这种资源进行管理， Controller主要有三种：*ReplicaSet，Replication Controller，Deployment*
 
 ### ReplicaSet
+
 ---
 ReplicaSet的主要作用是维持Pod集合的稳定运行, 即通常情况下保持一个稳定的数量运行.
+
+![avatar](/static/img/ReplicationController-1.png)
 
 那么这是如何做到的呢?
 
 首先来看一下ReplicaSet是如何定义的.
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: frontend
+  labels:
+    app: guestbook
+    tier: frontend
+spec:
+  # modify replicas according to your case
+  replicas: 3
+  selector:
+    matchLabels:
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        tier: frontend
+    spec:
+      containers:
+      - name: php-redis
+        image: gcr.io/google_samples/gb-frontend:v3
+```
 
-#### ReplicaSet的组成
 一个ReplicaSet的定义由以下部分组成:
 - 一个*标签选择器(label selector)*: 它的主要作用是指定哪些Pod是属于它“管辖”的.
 - 一个Pod数量: 即ReplicaSet所要保持的Pod的数量
@@ -138,12 +163,36 @@ ReplicaSet的主要作用是维持Pod集合的稳定运行, 即通常情况下�
 
 ### Replication Controller
 ---
-Replication Controller的作用与ReplicaSet相同, 只不过Replication Controller在标签选择上面的功能相对于ReplicaSet较弱, 具体体现在以下几个方面:
+Replication Controller的作用与ReplicaSet相同, 只不过Replication Controller在标签选择上面的功能相对于ReplicaSet较弱, 具体体现在以下几个方面:
 
 1. 假如有一个标签为`env = production` 和标签为 `env = dev` 的两个Pod, Replication Controller无法同时匹配这两个标签, 但是ReplicaSet可以.
 2. Replication Controller无法仅基于标签的存在来匹配Pod, 而ReplicaSet可以.
 
 所以在实际使用时, 不要使用Replication Controller, 使用ReplicaSet更加合适.
+
+一个Replication Controller的定义示例如下所示：
+```yaml
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: nginx
+spec:
+  replicas: 3
+  selector:
+    app: nginx
+  template:
+    metadata:
+      name: nginx
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+```
+可以看到，ReplicationController的定义除了selector的标签处理方式以外与ReplicaSet的定义几乎一样.
 
 ### Deployment
 ---
@@ -192,6 +241,10 @@ K@的Pod的生命是短暂的, 每一个Pod都有自己的IP地址, 但是可能
 
 有了Service, 可以达到服务(指应用服务)之间的解耦, 比如说一个无状态的数据处理后端，它使用3个副本运行,前端服务并不关心它们使用的是哪个后端,虽然组成后端集的实际pod可能会发生变化，但前端客户端不应该知道这一点，也不应该自己跟踪后端集。
 
+如下图所示：
+
+![avatar](/static/img/Service-1.png)
+
 ### Service的定义
 ---
 Service的定义实例如下所示:
@@ -208,7 +261,9 @@ spec:
     port: 80
     targetPort: 9376
 ```
-在这里, 我们定义了一个Service, 代理标签`app = MyApp`的Pod, 使用的协议为TCP, 并且所有发到Service的80端口的流量将会导入至Pod的9376端口.
+在这里, 我们定义了一个Service：
+
+所有标签`app = MyApp`的Pod将会是这个Service的一部分;使用的协议为TCP,并且所有发到Service的80端口的流量将会导入至Pod的9376端口.
 
 当然也可以定义不带selector的Service, 如下所示:
 ```yaml
@@ -262,6 +317,48 @@ REDIS_MASTER_PORT_6379_TCP_PROTO=tcp
 REDIS_MASTER_PORT_6379_TCP_PORT=6379
 REDIS_MASTER_PORT_6379_TCP_ADDR=10.0.0.11
 ```
-> 注意:当你需要
+> 注意:当你使用环境变量这种方式发现服务时， 必须保证Service启动完成之后，Pod再启动，因为只会在Pod启动的时候将环境变量注入到Pod中。
 
+#### DNS
+可以看到，使用环境变量的方式非常不灵活，幸好K@为我们提供了另一种方式：使用一个提供DNS服务的附加组件。
+DNS服务可以监视K@ API， 如果有新的Service建立，那么会在DNS record中新增一条记录，这样K@集群中的所有Pod都可以使用DNS Name来连接到Service。
+
+例如，如果你有一个Service叫做“My-Service”，它在“my-ns”命名空间中，在“my-ns”命名空间中的Pod可以通过`"my-service"`这个DNS名称解析到IP地址，当然也可以使用`"my-service.my-ns"`。如果是其他命名空间的Pod则需要使用`"my-service.my-ns"`这个名称。
+
+### 发布服务
+---
+以上介绍的都是在集群内部发现服务的方式，我们也会需要将服务暴露给集群外部，这时候可以使用`ServiceType`指定Service的类型，以上介绍的是默认的Service类型：`ClusterIP`，还有其他类型如下：
+- **`ClusterIP`**: 在集群内部暴露一个IP，这个IP只能由集群内部来访问，这是默认的ServiceType。
+- **`NodePort`**: 在集群中的每个工作节点Node上暴露一个静态端口--`NodePort`, 这样所有外部请求到地址：`<NodeIP>:<NodePort>`的请求将会自动转发到一个自动创建的`ClusterIP`类型的Service。
+- **`LoadBalancer`**：由云服务提供商提供的负载均衡器暴露服务。
+
+## 存储
+---
+由于Pod从K@的概念上来说不会一直存在，因为某种原因挂掉的话，kubelet将会重启它但是容器内部的文件会丢失，另外当pod内部的容器如果需要共享文件的话也需要K@的存储功能的支持。K@的`Volume`解决了上述问题。
+
+
+## 配置
+---
+### 资源分配
+
+为了实现资源（这里主要指CPU和内存）被有效利用， K@采用Requests和Limit两种限制类型来对资源进行分配。
+
+- Request：容器使用的最小资源需求，只有当工作节点的可用资源量>=Pod请求资源量时才允许将该Pod调度到该节点。
+- Limit：Pod使用资源最大值，设为0表示无上限。
+
+Request能够保证Pod有足够的资源来运行，而Limit则是防止某个Pod无限制地使用资源，导致其他Pod崩溃。两者之间必须满足关系: 0<=Request<=Limit<=Infinity (如果Limit为0表示不对资源进行限制，这时可以小于Request)
+
+### 资源抢占
+
+![avatar](/static/img/Resource-1.png)
+
+如上图，在一个4U4G的Node上，部署了四个Pod，每个Pod的Request为1U1G，Limit为2U2G，很有可能会出现Pod占用的资源大于1U，那么此时会出现资源抢占，对于资源抢占，K@根据资源能不能进行伸缩进行分类，分为可压缩资源和不可以压缩资源。CPU资源--是现在支持的一种可压缩资源。内存资源和磁盘资源为现在支持的不可压缩资源。
+
+假设四个Pod同时负载变高，CPU使用量超过1U，这个时候每个Pod将会按照各自的Request设置按比例分占CPU调度的时间片。在示例中，由于4个Pod设置的Request都为1U，发生资源抢占时，每个Pod分到的CPU时间片为1U/(1U×4)，实际占用的CPU核数为1U。在抢占发生时，Limit的值对CPU时间片的分配为影响，在本例中如果条件容器Limit值的设置，抢占情况下CPU分配的比例保持不变。
+
+对于不可压缩的资源，则按照优先级的不同进行Pod的驱逐（Evict）。
+
+对于不可压缩资源，如果发生资源抢占，则会按照优先级的高低进行Pod的驱逐。驱逐的策略为： 优先驱逐Request=Limit=0的Pod，其次驱逐0<Request<Limit<Infinity (Limit为0的情况也包括在内)。 0<Request==Limit的Pod的会被保留，除非出现删除其他Pod后，节点上剩余资源仍然没有达到Kubernetes需要的剩余资源的需求。
+
+由于对于不可压缩资源，发生抢占的情况会出Pod被意外Kill掉的情况，所以建议对于不可以压缩资源(Memory，Disk)的设置成0<Request==Limit。
 
