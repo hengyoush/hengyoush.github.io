@@ -350,7 +350,49 @@ DNS服务可以监视K@ API， 如果有新的Service建立，那么会在DNS re
 外部访问的解决方案已经有了，比如NodePort和LoadBalance，但是这些方案都有一个缺点那就是对于每一群Pod都要创建一个Service，那么当Service的数量增长，如何进行有效的管理？比如说使用一个IP地址和不同的路径就可以访问所有Service？
 
 K@为我们提供了一种方式：Ingress。
-Ingress将外网与service之间的HTTP路由暴露， 此外Ingress还提供了负载均衡， 
+Ingress将外网与service之间的HTTP路由暴露， Ingress会根据请求的主机名和路径决定请求到达的服务, 还可以提供会话亲和性等功能. 
+
+Ingress等定义实例如下:
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: kubia
+spec:
+  rules:
+  - host: kubia.example.com
+http: paths:
+      - path: /
+        backend:
+          serviceName: kubia-nodeport
+          servicePort: 80
+```
+ 根据上图的定义, Ingress将`kubia.example.com`映射到我们的服务, 并且将所有请求发送至端口80上的`kubia-nodeport`服务.
+
+ 根据上图的文件创建好Ingress资源后, 可以通过`kubectl get ingresses`获取Ingress的IP地址.然后可以在你的host文件中将IP地址和你文件中定义的host名称对应起来.
+
+> 下图为Ingress的工作流程, 客户端首先对kubia.example.com进行DNS查找, DNS服务器返回了Ingress Controller的IP, 客户端然后通过这个IP对Ingress Controller发送HTTP请求, Controller通过客户端请求的路径匹配到了后端的一个服务, 然后通过与该服务相关联的EndPoint对象查看pod IP, 并将客户端的请求转发给其中一个pod.
+![avatar](/static/img/Ingress-1.png)
+
+你也可以通过Ingress暴露不同的服务, 着这当然需要你配置不同的主机或路径,如下所示:
+```yaml
+spec: rules:
+  - host: foo.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: foo
+          servicePort: 80
+  - host: bar.example.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: bar
+          servicePort: 80
+```
+如上所示, 根据请求中的Host头, Controller接收到的请求将会被转发到foo或bar服务, 取决于其请求的host. DNS需要将`foo.example.com`和`bar.example.com`都映射到Ingress Controller的IP地址.
 
 ## 存储
 ---
@@ -367,6 +409,14 @@ Volume的生命周期与Pod中的容器无关，而与Pod本身相关，当Pod�
 
 **`PersistentVolumeClaim`**(PVC):由用户发起的存储资源请求，就和Pod消费节点资源一样，PVC消耗的是PV资源。
 
+如下是PV与PVC与用户管理员之间的关系:
+
+![avatar](/static/img/PVPVC-1.png)
+
+首先由集群管理员创建存储,然后通过向K@ API传递PV声明创建PV.
+然后需要使用存储的用户只需要创建一个PVC, 然后K@会找到一个具有足够容量的PV将其置于访问模式, 并将PVC绑定到PV.然后用户创建一个pod并通过volume配置引用PVC.
+
+bar.example.com
 ## 配置
 ---
 ### 资源分配
@@ -392,3 +442,13 @@ Request能够保证Pod有足够的资源来运行，而Limit则是防止某个Po
 
 由于对于不可压缩资源，发生抢占的情况会出Pod被意外Kill掉的情况，所以建议对于不可以压缩资源(Memory，Disk)的设置成0<Request==Limit。
 
+
+### 利用ConfigMap解耦配置
+ConfigMap本质上是一个键值对映射, 值可以是简单的字面量也可以是一个配置文件.
+此外应用对于ConfigMap是无感知的, 映射通过环境变量或者volume文件的形式传递给容器, 可以通过`${ENV_VAR}`的语法引用.
+
+![avatar](/static/img/ConfigMap-1.png)
+
+对于不同环境下, Pod的定义相同但是配置不相同的情况, ConfigMap也非常方便, 只要在不同的命名空间下定义不同的ConfigMap即可.
+
+![avatar](/static/img/ConfigMap-2.png)
