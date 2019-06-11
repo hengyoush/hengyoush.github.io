@@ -17,6 +17,15 @@ Kubernetes抽象了硬件基础设施, 使得对外暴露的是一个资源池, 
 
 ## K@的组成
 ---
+使用K@是非常直观的，你只需要使用K@ APIl来描述集群的期望状态，希望运什么应用程序，使用什么镜像，有多少个副本，希望什么网络和磁盘资源等类似声明式的方式来操控K@集群。
+
+一旦你提供了所需的状态，*Kubernetes Control Plane*会自动的执行各种任务来让集群状态与你描述的一致，这包括：启动或重启容器，自动伸缩副本数量等，*Kubernetes Control Plane*由以下几个进程组成：
+- **主节点-Kubernetes Master**：运行在集群中单个节点上的进程集合，包括：kube-apiserver，kube-controller-manager 和 kube-scheduler.
+- 每个非主节点上运行着两个进程：
+  - **kubelet**：与主节点通信。
+  - **kube-proxy**：将整个K@网络映射在节点上。
+
+![avatar](/static/img/K8sOverview-1.png)
 
 ## Pod
 ---
@@ -96,7 +105,7 @@ kubectl get pods
 K@通过容器探针来检测容器的状态从而判断是否需要重启Pod。
 
 <br>
-探针是由*Kubelet*定时调度的诊断程序，Kubelet会调用一个由容器实现的*Handler*， 有三种Handler如下：
+探针是由Kubelet定时调度的诊断程序，Kubelet会调用一个由容器实现的Handler， 有三种Handler如下：
 
 - ExecAcion: 在容器内部执行一个指定的命令，如果命令执行成功那么探针诊断的结果则判断为成功。<br>
 - TcpSocketAction： 针对容器的Ip和特定的端口进行一次TCP检查，如果端口开放则认为诊断成功。 <br>
@@ -332,10 +341,31 @@ DNS服务可以监视K@ API， 如果有新的Service建立，那么会在DNS re
 - **`NodePort`**: 在集群中的每个工作节点Node上暴露一个静态端口--`NodePort`, 这样所有外部请求到地址：`<NodeIP>:<NodePort>`的请求将会自动转发到一个自动创建的`ClusterIP`类型的Service。
 - **`LoadBalancer`**：由云服务提供商提供的负载均衡器暴露服务。
 
+> Port、TargetPort、NodePort的区别：Service中定义的port指的是Service的虚拟端口，而TargetPort指的是容器接收请求的端口，NodePort指的是Node上开放的静态端口，每个发到该端口上的请求将会被路由至一个自动创建的ClusterIP类型的Service上。
+
+### 服务发现相关总结
+一个Service的背后是一群Pod，每个Pod提供相同的功能，发往Service上的请求会被负载均衡至每个后端的Pod。实际上Service并不直接与Pod打交道，它不断的使用标签选择器持续计算Pod的结果并且将结果POST至一个EndPoint对象（这个ENdPoint对象的名字与Service的名字相同），当一个Pod挂掉，它自动从EndPoint中移除，当一个新的Pod加入，Service的标签选择器会发现它并且将它加入endpoint中。
+
+### Ingress--统一管理外部访问
+外部访问的解决方案已经有了，比如NodePort和LoadBalance，但是这些方案都有一个缺点那就是对于每一群Pod都要创建一个Service，那么当Service的数量增长，如何进行有效的管理？比如说使用一个IP地址和不同的路径就可以访问所有Service？
+
+K@为我们提供了一种方式：Ingress。
+Ingress将外网与service之间的HTTP路由暴露， 此外Ingress还提供了负载均衡， 
+
 ## 存储
 ---
+### Volume
+
 由于Pod从K@的概念上来说不会一直存在，因为某种原因挂掉的话，kubelet将会重启它但是容器内部的文件会丢失，另外当pod内部的容器如果需要共享文件的话也需要K@的存储功能的支持。K@的`Volume`解决了上述问题。
 
+Volume的生命周期与Pod中的容器无关，而与Pod本身相关，当Pod被删除时，Volume中的内容才会丢失。
+
+### 持久化存储
+下面介绍一种存储，它是独立于Pod的生命周期之外的存储方式：
+
+**`PersistentVolume`**(PV)是集群中的存储资源，由管理员或者由Storage Class动态分配，它和node工作节点一样是集群中的资源。
+
+**`PersistentVolumeClaim`**(PVC):由用户发起的存储资源请求，就和Pod消费节点资源一样，PVC消耗的是PV资源。
 
 ## 配置
 ---
