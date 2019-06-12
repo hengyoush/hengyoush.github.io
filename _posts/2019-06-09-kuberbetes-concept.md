@@ -9,8 +9,6 @@ categories: [k8s]
 ---
 现如今, 单体应用正逐渐分解成为小的独立的组件, 我们称为微服务. 微服务之间彼此解耦, 它们之间可以独立开发,测试,部署. 随着服务个数逐渐增多, 配置管理系统的正常运行变得越来越困难.
 
-(比如说我们想要获得足够高的资源利用率, 把服务部署在什么地方需要人为的操作, 包括监视, 故障处理, 自动调度等, Kubernetes给了我们一套解决方案)
-
 Kubernetes抽象了硬件基础设施, 使得对外暴露的是一个资源池, 这让我们在部署应用时不用关注底层的服务器. 使用Kubernetes部署应用时, 它会为每个组件选择一个合适的服务器, 而且通过内置的服务发现机制可以使每个组件互相发现并且实现通信.
 
 简单来说, 容器技术给了我们在发布和更新应用方面上的方便和快捷, 而Kubernetes则帮助我们决定这些容器在哪里运行何时运行并且帮助它们找到所需的资源.
@@ -113,7 +111,7 @@ Kubernetes通过容器探针来检测容器的状态从而判断是否需要重�
 
 对于探针的类型，有如下两种：
 1. `livenessProbe`：用于确定容器是否处于`Running`状态，如果诊断失败，那么kubelet会停止该容器并且根据`Restart Policy`进行下一步的操作。
-2. `readinessProbe`：用于确定该容器是否准备好接收请求，如果诊断失败，那么`endpoinrs controller`会将所有匹配该Pod的Service的Endpoint中移除该Pod的Ip地址。
+2. `readinessProbe`：用于确定该容器是否准备好接收请求，如果诊断失败，那么`endpoints controller`会将所有匹配该Pod的Service的Endpoint中移除该Pod的Ip地址。
 
 *RestartPolicy*
 
@@ -344,7 +342,7 @@ DNS服务可以监视Kubernetes API， 如果有新的Service建立，那么会�
 > Port、TargetPort、NodePort的区别：Service中定义的port指的是Service的虚拟端口，而TargetPort指的是容器接收请求的端口，NodePort指的是Node上开放的静态端口，每个发到该端口上的请求将会被路由至一个自动创建的ClusterIP类型的Service上。
 
 ### 服务发现相关总结
-一个Service的背后是一群Pod，每个Pod提供相同的功能，发往Service上的请求会被负载均衡至每个后端的Pod。实际上Service并不直接与Pod打交道，它不断的使用标签选择器持续计算Pod的结果并且将结果POST至一个EndPoint对象（这个ENdPoint对象的名字与Service的名字相同），当一个Pod挂掉，它自动从EndPoint中移除，当一个新的Pod加入，Service的标签选择器会发现它并且将它加入endpoint中。
+一个Service的背后是一群Pod，每个Pod提供相同的功能，发往Service上的请求会被负载均衡至每个后端的Pod。实际上Service并不直接与Pod打交道，它不断的使用标签选择器持续计算Pod的结果并且将结果POST至一个EndPoint对象（这个EndPoint对象的名字与Service的名字相同），当一个Pod挂掉，它自动从EndPoint中移除，当一个新的Pod加入，Service的标签选择器会发现它并且将它加入endpoint中。
 
 ### Ingress--统一管理外部访问
 外部访问的解决方案已经有了，比如NodePort和LoadBalance，但是这些方案都有一个缺点那就是对于每一群Pod都要创建一个Service，那么当Service的数量增长，如何进行有效的管理？比如说使用一个IP地址和不同的路径就可以访问所有Service？
@@ -352,7 +350,7 @@ DNS服务可以监视Kubernetes API， 如果有新的Service建立，那么会�
 Kubernetes为我们提供了一种方式：Ingress。
 Ingress将外网与service之间的HTTP路由暴露， Ingress会根据请求的主机名和路径决定请求到达的服务, 还可以提供会话亲和性等功能. 
 
-Ingress等定义实例如下:
+Ingress的定义实例如下:
 ```yaml
 apiVersion: extensions/v1beta1
 kind: Ingress
@@ -374,7 +372,7 @@ http: paths:
 > 下图为Ingress的工作流程, 客户端首先对kubia.example.com进行DNS查找, DNS服务器返回了Ingress Controller的IP, 客户端然后通过这个IP对Ingress Controller发送HTTP请求, Controller通过客户端请求的路径匹配到了后端的一个服务, 然后通过与该服务相关联的EndPoint对象查看pod IP, 并将客户端的请求转发给其中一个pod.
 ![avatar](/static/img/Ingress-1.png)
 
-你也可以通过Ingress暴露不同的服务, 着这当然需要你配置不同的主机或路径,如下所示:
+你也可以通过Ingress暴露不同的服务, 这需要你配置不同的主机或路径,如下所示:
 ```yaml
 spec: rules:
   - host: foo.example.com

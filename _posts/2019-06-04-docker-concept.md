@@ -18,8 +18,6 @@ categories: [docker]
 
 一个**容器**就是一个镜像的运行实例。每个容器是一个单独的进程，且它们之间相互隔离，只能访问授予它们的资源。
 
-docker则是一个开源容器运行引擎。
-
 #### 容器与虚拟机的相同与不同之处
 容器和虚拟机都提供了一定程度的资源隔离，环境隔离功能，但是它们的区别仍然十分明显，比如：
 1. 容器是轻量级的，而虚拟机则相对“笨重”。
@@ -46,7 +44,7 @@ Docker Engine的组成如下所示:
 
 ![avatar](/static/img/architecture.svg)
 
-docker使用C/S结构, docker client与docker daemon交互, docker daemon负责构建、运行和分发Docker容器。Docker客户机和守护进程可以运行在同一个系统上，也可以将Docker客户机连接到远程Docker守护进程。Docker客户机和守护进程使用REST API通过UNIX套接字或网络接口进行通信。
+docker使用C/S结构, docker client与docker daemon交互, docker daemon负责构建、运行和分发Docker容器。Docker客户机和守护进程可以运行在同一个系统上，也可以将Docker client连接到远程Docker daemon。Docker client和Docker daemon使用REST API进行通信。
 
 ---
 
@@ -584,5 +582,3 @@ docker network create --driver bridge alpine-net
 docker run -dit --name alpine1 --network alpine-net alpine ash
 ```
 我们使用`--network`选项指定网络`alpine-net`用于连接.
-
-*这里有详细教程: https://docs.docker.com/network/network-tutorial-standalone/*
