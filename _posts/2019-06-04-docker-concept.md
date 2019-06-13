@@ -582,3 +582,17 @@ docker network create --driver bridge alpine-net
 docker run -dit --name alpine1 --network alpine-net alpine ash
 ```
 我们使用`--network`选项指定网络`alpine-net`用于连接.
+
+## Docker与Jenkins持续构建
+
+下面是基于Jenkins与Dockers的持续构建流程图：
+
+![avatar](/static/img/Docker-CI.png)
+
+大体流程：
+1. 开发人员在GitLab上打了一个tag。
+2. gitLab将代码提交事件推送到Jenkins（或者通过现有的CI平台手动构建）。
+3. Jenkins拉取代码，编译，打包，构建镜像（Jenkins本地脚本，可使用上述多种方法构建镜像）。
+4. Jenkins将镜像push至Docker镜像仓库（可以自建Docker Registry，也可使用阿里云镜像仓库）。
+5. Jenkins执行远程脚本，首先让部署机器pull镜像，然后停止老版本容器，启动新版本容器。
+6. 通知相关人员部署结果。
