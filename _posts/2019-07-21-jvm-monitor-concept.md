@@ -9,11 +9,11 @@ categories: [jvm]
 我们在讲锁时,经常会提到`monitorenter`, 它是对应`synchronized`关键字的字节码其中之一, 还有`monitorexit`对应同步块的退出, 下面我们来看jvm源码(OPENJDK10)中
 是如何处理`monitorenter`的.
 
-*在阅读本文章前, 你必须具有关于JVM锁的基础知识,比如: 什么是偏向锁,什么是displaced header.*
+> *在阅读本文章前, 你必须具有关于JVM锁的基础知识,比如: 什么是偏向锁,什么是displaced header.*
 
 ## 源码分析
 首先找到地址最高的空闲的LockRecord:
-```Php
+```php
         CASE(_monitorenter): {
             oop lockee = STACK_OBJECT(-1);
             // derefing's lockee ought to provoke implicit null check
