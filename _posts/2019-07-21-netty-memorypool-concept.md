@@ -461,3 +461,244 @@ private void allocateNormal(PooledByteBuf<T> buf, int reqCapacity, int normCapac
     qInit.add(c);
 }
 ```
+首先尝试在每个ChunkList中分配, 如果在其中一个ChunkList中分配成功,那么直接返回, 否则创建一个新的Chunk, 在其中分配, 然后将其加入到qInit的
+ChunkList中.
+
+ok ,我们来看ChunkList的allocate方法.(*我们在这里可以做一个小小的猜测, 在ChunkList的allocate方法中还是会调用Chunk的allocate方法*)
+
+```java
+boolean allocate(PooledByteBuf<T> buf, int reqCapacity, int normCapacity) {
+    if (normCapacity > maxCapacity) {
+        return false;
+    }
+
+    for (PoolChunk<T> cur = head; cur != null; cur = cur.next) {
+        if (cur.allocate(buf, reqCapacity, normCapacity)) {
+            if (cur.usage() >= maxUsage) {
+                remove(cur);
+                nextList.add(cur);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+首先判断了请求大小不能超过这个ChunkList中的Chunk可以分配的最大大小, 这个限制值是由这个ChunkList带有的使用率决定的(详见上方的图).
+
+接着遍历链表, 调用Chunk的allocate方法, 如果分配成功那么判断是否需要转移该Chunk.
+
+ok, 归根结底还是调用了Chunk的allocate方法, 下面我们进入Chunk的allocate方法一探究竟. 不过在此之前我们需要先了解Chunk的结构组成.
+
+---
+
+## Chunk
+
+### Chunk结构分析
+```java
+final PoolArena<T> arena; // Chunk所在的Arena
+final T memory; // 实际的内存，根据是不是direct的有区分，比如direct的是ByteBuffer，heap的是byte[]
+final boolean unpooled; // false
+final int offset; // 相对memory的偏移（因为要内存对齐，详见PoolArena#offsetCacheLine）
+private final byte[] memoryMap; // 记录可分配信息
+private final byte[] depthMap; // 存放每个深度信息
+private final PoolSubpage<T>[] subpages; // 存放该Chunk的subpage
+private final int subpageOverflowMask; // 判断是否大于pageSize的掩码
+private final int pageSize; // 默认8K
+private final int pageShifts; // 默认13
+private final int maxOrder; // 11
+private final int chunkSize; // 16MB
+private final int log2ChunkSize; // 24
+private final int maxSubpageAllocs;// 1 << maxOrder
+```
+
+Chunk的最主要的属性是memoryMap和depthMap.我们知道, Chunk默认被分为2048个Page, 每个Page大小8K, Chunk采用完全二叉树来管理Page, 每个Page作为二叉树的叶节点,
+那么二叉树的树高为11, 总共包含2048 * 2 - 1  = 4095个节点.
+
+好的,我们接着来看Chunk的构造方法.
+```java
+PoolChunk(PoolArena<T> arena, T memory, int pageSize, int maxOrder, int pageShifts, int chunkSize, int offset) {
+    unpooled = false;
+    this.arena = arena;
+    this.memory = memory;
+    this.pageSize = pageSize;
+    this.pageShifts = pageShifts;
+    this.maxOrder = maxOrder;
+    this.chunkSize = chunkSize;
+    this.offset = offset;
+    unusable = (byte) (maxOrder + 1); // 12
+    log2ChunkSize = log2(chunkSize);
+    subpageOverflowMask = ~(pageSize - 1);
+    freeBytes = chunkSize;
+
+    maxSubpageAllocs = 1 << maxOrder; // 2^11
+
+    // Generate the memory map.
+    memoryMap = new byte[maxSubpageAllocs << 1];// 一共2^12
+    depthMap = new byte[memoryMap.length];// 一共2^12
+    int memoryMapIndex = 1;
+    for (int d = 0; d <= maxOrder; ++ d) {
+        int depth = 1 << d;
+        for (int p = 0; p < depth; ++ p) {
+            memoryMap[memoryMapIndex] = (byte) d;// 全都初始化为对应的深度
+            depthMap[memoryMapIndex] = (byte) d;
+            memoryMapIndex ++;
+        }
+    }
+
+    subpages = newSubpageArray(maxSubpageAllocs);
+    cachedNioBuffers = new ArrayDeque<ByteBuffer>(8);
+}
+```
+
+ok, 对照着构造方法中对memoryMap和depthMap的初始化过程, 我们可以发现它们在一开始都被初始化为对应节点在二叉树中的深度.
+
+depthMap在之后不会改变, 而memoryMap在之后会随着节点的分配而改变, 比如一个叶节点A被分配, 那么这个A节点所在的memoryMap的值
+会被修改为unusable即12, 其父节点的memoryMap值会根据其子节点的memoryMap的最小值来决定, 那么A的父节点的memoryMap值应该被更新为11, 
+其父节点的父节点会被更新为10, 以此类推.
+
+ok, 了解了内存分配对memoryMap的影响, 接下来我们回到allocate的逻辑中来.
+
+### allocate分析
+```java
+boolean allocate(PooledByteBuf<T> buf, int reqCapacity, int normCapacity) {
+    final long handle;
+    if ((normCapacity & subpageOverflowMask) != 0) { // >= pageSize
+        handle =  allocateRun(normCapacity);// 分配多个Page
+    } else {
+        handle = allocateSubpage(normCapacity);// 在一个Page内分配
+    }
+
+    if (handle < 0) {
+        return false;
+    }
+    ByteBuffer nioBuffer = cachedNioBuffers != null ? cachedNioBuffers.pollLast() : null;
+    initBuf(buf, nioBuffer, handle, reqCapacity);
+    return true;
+}
+```
+
+首先判断要分配的大小是否小于一个Page, 如果小于那么直接进入SubPage的逻辑中否则分配多个Page.
+
+我们首先看`allocateSubpage`.
+
+#### allocateSubpage
+```java
+private long allocateSubpage(int normCapacity) {
+    // 获取对应arena中的Subpage链表中的head
+    PoolSubpage<T> head = arena.findSubpagePoolHead(normCapacity);
+    int d = maxOrder; // d为要分配的深度, 此处是Subpage,故一定在叶节点, d = 11;
+    synchronized (head) {
+        int id = allocateNode(d);// 重要逻辑在这
+        if (id < 0) {
+            return id;
+        }
+
+        final PoolSubpage<T>[] subpages = this.subpages;
+        final int pageSize = this.pageSize;
+
+        freeBytes -= pageSize;
+
+        int subpageIdx = subpageIdx(id);// 获取subpage在Chunk中的位置
+        PoolSubpage<T> subpage = subpages[subpageIdx];
+        if (subpage == null) {
+            subpage = new PoolSubpage<T>(head, this, id, runOffset(id), pageSize, normCapacity);
+            subpages[subpageIdx] = subpage;
+        } else {
+            subpage.init(head, normCapacity);
+        }
+        return subpage.allocate();
+    }
+}
+```
+
+1. 首先确定要分配的深度, 这里是叶节点, 故d为maxOrder.
+2. 接着调用allocateNode方法,传入参数是深度, 在接下来我们可以看到allocateRun其实也调用了该方法, 只不过深度小于maxOrder.
+3. 获得分配的节点后需要初始化subpage并且添加到arena中 的subpagePool中去.
+
+我们先看allocateNode方法:
+```java
+private int allocateNode(int d) {
+    int id = 1;
+    int initial = - (1 << d); // 最后d位为0, 其他为1
+    byte val = value(id); // 获取memoryMap的值, 这里id=1, 二叉树的root, 从root开始往下
+    if (val > d) { // 当memoryMap的值大于某个值说明该节点下面没有足够的空间分配了
+        return -1;
+    }
+    while (val < d || (id & initial) == 0) { // 只要当前id对应的节点还能分配(有余) || id还在d层的上面但节点无余(val==d) -> 继续向下
+        id <<= 1; // 继续向下
+        val = value(id);
+        if (val > d) { // 如果左节点不行,那么尝试右节点(右节点一定可以, 因为已经通过了while条件的判断了)
+            id ^= 1;
+            val = value(id);
+        }
+    }
+    byte value = value(id);
+    assert value == d && (id & initial) == 1 << d : String.format("val = %d, id & initial = %d, d = %d",
+            value, id & initial, d);
+    setValue(id, unusable); // 将获取到的节点的memoryMap设置为unusable
+    updateParentsAlloc(id); // 更新祖先节点
+    return id;
+}
+
+/** Chunk#value **/
+private byte value(int id) {
+    return memoryMap[id];
+}
+/** Chunk#updateParentsAlloc **/
+private void updateParentsAlloc(int id) {
+    while (id > 1) { // 没到达root, root没有父节点
+        int parentId = id >>> 1; // 父节点
+        byte val1 = value(id);
+        byte val2 = value(id ^ 1);
+        byte val = val1 < val2 ? val1 : val2; // 获取自己和兄弟节点的value, 选取小的作为parent的value
+        setValue(parentId, val);
+        id = parentId;
+    }
+}
+```
+首先我们假设d = 11, 即分配的是叶节点来解释allocate的代码, 这段代码实现了伙伴算法的分配思想.
+1. 判断当前root是否可以分配, 这里会有同学想问`val = d`可不可以,当然不可以,因为这相当于要分配一个Page, er这个大小是不能通过`(normCapacity & subpageOverflowMask) != 0`这个检查的.
+2. 进入while循环, 这个循环的作用主要是找到能够满足当前需要的最低级节点, 而且是从左往右分配. 然后我们再来解读这个while循环的条件:<br><br>
+首先判断`val < d`, 这个式子成立的意思是当前节点的两个节点都满足分配; <br><br> 第二个式子是`(id & initial) == 0`, initial只有最后11位是0, 其他全是1, 这意味着想要这个条件成立,必须id小于2^11,这就意味着id不能是目标深度节点才可以进入循环, 因为进入循环就意味着要向下一层前进, 而且第二个式子的隐含条件是`val==d`,即只有右孩子节点是正好满足要求的.
+3. 进入循环, 首先id左移, 相当于深度加一, 如果左孩子无法分配, 那么与1异或(左孩子永远都是偶数), 得到右孩子, 继续循环.
+4. 跳出循环, 这里id就是我们要找的节点, 我们将其设置为12,并且更新节点的memoryMap的值知道父节点(如前所述).返回id, id即节点在二叉树中的索引.
+
+ok, 分析完了allocateNode方法, 我们继续回到allocateSubpage方法中
+
+```java
+int id = allocateNode(d);// 我们这里返回了在二叉树中的索引
+if (id < 0) {
+    return id;
+}
+
+final PoolSubpage<T>[] subpages = this.subpages;
+final int pageSize = this.pageSize;
+
+freeBytes -= pageSize;
+
+int subpageIdx = subpageIdx(id);// 获取subpage在Chunk中的位置
+PoolSubpage<T> subpage = subpages[subpageIdx];
+if (subpage == null) {
+    subpage = new PoolSubpage<T>(head, this, id, runOffset(id), pageSize, normCapacity); // runOffset(id)获取的是在Chunk中的内存偏移量
+    subpages[subpageIdx] = subpage;
+} else {
+    subpage.init(head, normCapacity);
+}
+return subpage.allocate();
+
+/** subpageIdx **/
+private int subpageIdx(int memoryMapIdx) {
+    return memoryMapIdx ^ maxSubpageAllocs; // remove highest set bit, to get offset
+}
+```
+我们获取了分配节点在Chunk二叉树中的索引, 接着调用`subpageIdx`方法获取其在subpages中的偏移量(因为叶节点的id是大于subpages的长度即1 << 11 的, 所以此处将最高位的1移除).
+
+获取到subpages数组中对应位置的PoolSubpage后根据其是否已经分配进行后续的逻辑:
+
+- 未分配: 初始化一个PoolSubpage,放到Chunk的subpages中.
+- 已分配: 说明以前分配过但现在free了, 重新init即可.
+
+我们分别来看这两种情况之前需要分析`PoolSubpage`的组成.
+
