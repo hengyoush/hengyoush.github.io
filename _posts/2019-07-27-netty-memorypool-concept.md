@@ -35,7 +35,13 @@ Page由一个完全平衡二叉树管理, 其中叶子为2048个Page.
 - Small: 512-8192 (一个Page以内)
 - Normal: 8K-16MB (一个page到一个Chunk)
 - Huge: > 16MB
-![avatar](/static/img/netty-memalloc-sizeclass.webp)
+
+|分类 |大小 |
+|-|-|
+|Tiny |16B<br>32B<br>...<br>480B<br>496B<br>|
+|Small| 512B<br>1KB<br>...<br>2KB<br>4KB<br>|
+|Normal| 8KB<br>16KB<br>...8MB<br>16MB<br>|
+|Huge| 32MB<br>64MB<br>...|
 
 请求大小会被规范化, 最小16B, 在到达Small之前以16B递增作为可分配的大小, 然后以2倍递增.
 
