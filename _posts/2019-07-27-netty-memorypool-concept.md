@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Netty内存池原理分析"
-date:   2019-07-21 20:18:00 +0700
+date:   2019-07-27 02:00:00 +0700
 categories: [netty]
 ---
 
@@ -702,3 +702,379 @@ private int subpageIdx(int memoryMapIdx) {
 
 我们分别来看这两种情况之前需要分析`PoolSubpage`的组成.
 
+### PoolSubpage结构分析
+```java
+final PoolChunk<T> chunk; // 所属chunk
+private final int memoryMapIdx; // memoryMap数组的索引
+private final int runOffset; // 在chunk中的内存偏移量
+private final int pageSize; 
+private final long[] bitmap; // 表示Subpage的分配信息，长度为pageSize / 16 / 64，64代表是long，16代表每个位16B(对应最小16B), 默认为8
+
+PoolSubpage(PoolSubpage<T> head, PoolChunk<T> chunk, int memoryMapIdx, int runOffset, int pageSize, int elemSize) {
+    this.chunk = chunk;
+    this.memoryMapIdx = memoryMapIdx;
+    this.runOffset = runOffset;
+    this.pageSize = pageSize;
+    bitmap = new long[pageSize >>> 10]; // pageSize / 16 / 64
+    init(head, elemSize);
+}
+
+void init(PoolSubpage<T> head, int elemSize) {
+    doNotDestroy = true;
+    this.elemSize = elemSize;
+    if (elemSize != 0) {
+        maxNumElems = numAvail = pageSize / elemSize; // 可分配个数
+        nextAvail = 0;
+        bitmapLength = maxNumElems >>> 6; // 可分配个数除以64, 计算bitmap的长度
+        if ((maxNumElems & 63) != 0) { // 此处补上一步整除的余数, 假设maxNumElems = 100, 那么上一步得出的结果为1, 此处再加一
+            bitmapLength ++;
+        }
+
+        for (int i = 0; i < bitmapLength; i ++) {// 初始化bitmap
+            bitmap[i] = 0;
+        }
+    }
+    addToPool(head);
+}
+
+private void addToPool(PoolSubpage<T> head) { // 简单插入head的next中
+    assert prev == null && next == null;
+    prev = head;
+    next = head.next;
+    next.prev = this;
+    head.next = this;
+}
+```
+init方法参数head为Arena中Subpage链表的head, elemSize为Subpage的分配大小.
+
+如上所示, PoolSubpage的初始化过程主要是bitmap数组的初始化, bitmap主要表示一个Page中的分配情况,
+bitmap是long数组, 每个long中的每一位表示一次分配.每一次分配都会在bitmap中的long中的一位置1, 在每一个long中从右向左分配.
+
+例如, 假设该Page的可分配大小为1K, 那么可分配个数为8, 所以一个long就可以表示完成表示.
+
+假设分配大小为32, 那么可分配个数就为256, 需要long的个数为4, 所以bitmap的长度为4.
+
+ok, 分析完了subpage的大致结构, 我们再来看它的allocate方法.
+
+```java
+long allocate() {
+    if (elemSize == 0) {
+        return toHandle(0);
+    }
+
+    if (numAvail == 0 || !doNotDestroy) { // 分配大小过大或者doNotDestroy为false,返回分配失败
+        return -1;
+    }
+
+    final int bitmapIdx = getNextAvail(); // 获取可用的bitmap索引,第一次分配时为0
+    int q = bitmapIdx >>> 6; // 第几个long?
+    int r = bitmapIdx & 63; // long中的第几个?
+    assert (bitmap[q] >>> r & 1) == 0; // 一定没分配
+    bitmap[q] |= 1L << r; // 把对应的位置为1
+
+    if (-- numAvail == 0) {
+        removeFromPool(); // 从链表中unlink
+    }
+    // 0x4000000000000000L | (long) bitmapIdx << 32 | memoryMapIdx;
+    return toHandle(bitmapIdx);  // 即前32位放bitmap, 后32位放memoryMap的索引即Page在Chunk中的位置
+}
+/**---------------------------**/
+private int getNextAvail() {
+    int nextAvail = this.nextAvail;
+    if (nextAvail >= 0) { // 初始时为0
+        this.nextAvail = -1;
+        return nextAvail;
+    }
+    return findNextAvail(); // 如果不是第一次分配
+}
+/**---------------------------**/
+private int findNextAvail() {
+    final long[] bitmap = this.bitmap;
+    final int bitmapLength = this.bitmapLength;
+    for (int i = 0; i < bitmapLength; i ++) { // 遍历bitmap,寻找没有被占用的空间
+        long bits = bitmap[i];
+        if (~bits != 0) { // bits的反不为0说明bits存在0, 即Subpage没有分配的位置
+            return findNextAvail0(i, bits); // i为当前第几个long, bits为当前long
+        }
+    }
+    return -1;
+}
+/**---------------------------**/
+private int findNextAvail0(int i, long bits) {
+    final int maxNumElems = this.maxNumElems;
+    final int baseVal = i << 6; 
+
+    for (int j = 0; j < 64; j ++) {// 遍历bits的每一位, 寻找0, 在分配时1是从右向左分配的
+        if ((bits & 1) == 0) { // 找到0了
+            int val = baseVal | j; 
+            if (val < maxNumElems) {
+                return val;
+            } else {
+                break;
+            }
+        }
+        bits >>>= 1; // 这一位是1,继续向左寻找
+    }
+    return -1;
+}
+```
+1. 首先获取下一个可用的bitmapIdx,.(*bitmapIdx = 64 * (bitmap数组索引) + long中第某位比如bitmapIdx = 106, 那么就意味着在bitmap中的第2个long中的第42位(从右往左)* )<br>
+1.1 nextAvail不为负数时,说明已经计算好了(可能时第一次分配)此时直接返回即可,否则进入1.2<br>
+1.2 遍历bitmap, 找到bitmap不全为1的long, 然后在这个long中找到位为0的位置, 即findNextAvail0中, 找到之后,返回`baseVal | j`, baseVal为当前long的起始idx, j为0在当前long的位置, 故此处直接或就可以得到0在整个bitmap中的位置.
+
+2. 找到了0之后,将此处的0置为1,即`bitmap[q] |= 1L << r`.
+
+3. 如果该Page经过这次分配无法再分配了, 那么从subpagePool中移除.
+
+4. 返回一个handle的long值, 前32位表示在Subpage中的位置, 后32位表示Page在Chunk中的位置.
+
+ok,此处返回了handle之后, 我们再回过头看Chunk的逻辑:
+```java
+boolean allocate(PooledByteBuf<T> buf, int reqCapacity, int normCapacity) {
+    final long handle;
+    if ((normCapacity & subpageOverflowMask) != 0) { // >= pageSize
+        handle =  allocateRun(normCapacity);
+    } else {
+        handle = allocateSubpage(normCapacity); // 我们刚刚分析的是这个方法
+    }
+
+    if (handle < 0) {
+        return false;
+    }
+    ByteBuffer nioBuffer = cachedNioBuffers != null ? cachedNioBuffers.pollLast() : null;
+    initBuf(buf, nioBuffer, handle, reqCapacity); 
+    return true;
+}
+```
+我们刚刚分析的是allocateSubpage的一系列方法, 接下来我们看allocateRun方法, allocateRun方法比较简单, 其中allocateNode
+方法我们已经分析过了, 就不再赘述了,我们快速过一遍即可.
+```java
+private long allocateRun(int normCapacity) {
+    int d = maxOrder - (log2(normCapacity) - pageShifts); // 找到第几层
+    int id = allocateNode(d); // 在该层上分配, 获取id, id为memoryMap的索引
+    if (id < 0) {
+        return id;
+    }
+    freeBytes -= runLength(id); // freeBytes减去id节点分配的大小
+    return id;
+}
+
+private int runLength(int id) {
+    return 1 << log2ChunkSize - depth(id); // id代表的节点有多大
+}
+```
+
+ok, 家下来我们进入`initBuf(buf, nioBuffer, handle, reqCapacity); `方法, 分析PooledByteBuffer是如何根据分配到的handle初始化的.
+
+### PooledByteBuf在Chunk中的初始化
+```java
+void initBuf(PooledByteBuf<T> buf, ByteBuffer nioBuffer, long handle, int reqCapacity) {
+    int memoryMapIdx = memoryMapIdx(handle);// 获取handle的低32位
+    int bitmapIdx = bitmapIdx(handle);// 获取高32位
+    if (bitmapIdx == 0) {
+        byte val = value(memoryMapIdx); // memoryMap[memoryMapIdx]
+        assert val == unusable : String.valueOf(val);
+        buf.init(this, nioBuffer, handle, runOffset(memoryMapIdx) + offset,
+                reqCapacity, runLength(memoryMapIdx), arena.parent.threadCache());
+    } else {
+      int memoryMapIdx = memoryMapIdx(handle);
+        PoolSubpage<T> subpage = subpages[subpageIdx(memoryMapIdx)];
+        buf.init(
+            this, nioBuffer, handle,
+            runOffset(memoryMapIdx) + (bitmapIdx & 0x3FFFFFFF) * subpage.elemSize + offset,
+                reqCapacity, subpage.elemSize, arena.parent.threadCache());
+    }
+}
+
+private int runOffset(int id) {
+    // represents the 0-based offset in #bytes from start of the byte-array chunk
+    int shift = id ^ 1 << depth(id);
+    return shift * runLength(id);
+}
+
+private int runLength(int id) {
+    // represents the size in #bytes supported by node 'id' in the tree
+    return 1 << log2ChunkSize - depth(id);
+}
+```
+我们来分析一下initBuf方法.
+根据bitmapIdx是否为0分为两个分支, bitmapIdx如果为0说明是第一次在Page上分配或者是normal分配, 否则则是Page已经有分配, 所以要计算一个位移.
+我们可以对比两个分支的buf.init方法的参数的不同.
+1. 第一次分配或normal分配:`runOffset(memoryMapIdx) + offset`,runOffset根据memoryId计算二叉树节点在Chunk中的位移, `offset`则是
+Chunk中实际开始分配的内存相对于memory的位移(详见PoolArena#offsetCacheLine), 两者加在一起则是此次分配在Chunk中的位移.<br>
+第二次分配则是:`unOffset(memoryMapIdx) + (bitmapIdx & 0x3FFFFFFF) * subpage.elemSize + offset`, 比第一次多了个
+`(bitmapIdx & 0x3FFFFFFF) * subpage.elemSize`, Chunk的最大大小是1<<30(见PooledByteBufAllocator#MAX_CHUNK_SIZE), 所以bitmapIdx一定在1<<30之内, 而0x3FFFFFFF为2^30 - 1.这个多出来的位移正是Subpage上其他分配的内存所占用的.
+2. 第一次分配或normal分配:`runLength(memoryMapIdx)`, 这个参数的意思是分配的最大大小, 和reqCapacity相对照.`subpage.elemSize`也是同样.
+
+最终会调用到pooledBytebuf的init0方法:
+```java
+private void init0(PoolChunk<T> chunk, ByteBuffer nioBuffer,
+                    long handle, int offset, int length, int maxLength, PoolThreadCache cache) {
+    assert handle >= 0;
+    assert chunk != null;
+
+    this.chunk = chunk;
+    memory = chunk.memory;
+    tmpNioBuf = nioBuffer;
+    allocator = chunk.arena.parent;
+    this.cache = cache;
+    this.handle = handle;
+    this.offset = offset;
+    this.length = length;
+    this.maxLength = maxLength;
+}
+```
+ok, 仅仅是设置了一些属性值, PooledByteBuf及其子类的实现都比较简单, 在此不再赘述.
+
+ok以上就是netty内存池内存分配相关的代码解读, 接下来我们开始解读另一半: 内存的回收与释放.
+我们按照: Subpage -> Chunk -> ChunkList -> Arena的顺序解读内存的回收.
+
+## 内存的回收
+### Subpage内存的释放
+```java
+boolean free(PoolSubpage<T> head, int bitmapIdx) {
+    if (elemSize == 0) {
+        return true;
+    }
+    int q = bitmapIdx >>> 6;
+    int r = bitmapIdx & 63;
+    assert (bitmap[q] >>> r & 1) != 0;
+    bitmap[q] ^= 1L << r; // 将bitmap中的位置为0
+
+    setNextAvail(bitmapIdx); // 设置当前bitmapIdx为nextAvail
+
+    if (numAvail ++ == 0) {// 又可以用了， 加入到SubpagePool中
+        addToPool(head);
+        return true;
+    }
+
+    if (numAvail != maxNumElems) { // Subpage还存在被分配的
+        return true;
+    } else {
+        if (prev == next) { // 链表至少要保证一个存在
+            return true;
+        }
+
+        doNotDestroy = false; // 可以释放了
+        removeFromPool();
+        return false;
+    }
+}
+```
+1. 首先将bitmap还原
+2. 设置nextAvail
+3. 如果必要,将当前Subpage加入到SubpagePool中去
+4. 根据Subpage是否还在使用返回true or false
+
+### Chunk内存的释放
+```java
+void free(long handle, ByteBuffer nioBuffer) {
+    int memoryMapIdx = memoryMapIdx(handle);
+    int bitmapIdx = bitmapIdx(handle);
+
+    if (bitmapIdx != 0) { // 释放Subpage
+        PoolSubpage<T> subpage = subpages[subpageIdx(memoryMapIdx)];
+        assert subpage != null && subpage.doNotDestroy;
+
+        PoolSubpage<T> head = arena.findSubpagePoolHead(subpage.elemSize);
+        synchronized (head) {
+            if (subpage.free(head, bitmapIdx & 0x3FFFFFFF)) { // Subpage还在使用直接返回否则释放Subpage并且从pool中移除
+                return;
+            }
+        }
+    }
+    freeBytes += runLength(memoryMapIdx);
+    setValue(memoryMapIdx, depth(memoryMapIdx)); // 还原memoryMap节点值
+    updateParentsFree(memoryMapIdx); // 更新祖先节点memoryMap
+
+    if (nioBuffer != null && cachedNioBuffers != null &&
+            cachedNioBuffers.size() < PooledByteBufAllocator.DEFAULT_MAX_CACHED_BYTEBUFFERS_PER_CHUNK) {
+        cachedNioBuffers.offer(nioBuffer);
+    }
+}
+```
+释放Subpage的时候需注意是否是链表的最后一个, 如果是那么即使完全没有分配也继续留在链表里,否则从链表中移除
+并且还原memoryMap, 这样就可以继续在Chunk中分配给其他请求.
+
+为什么这里链表只需要一个就够了呢, 因为多个并不能带来什么增益反而会因为SUbpage个数爆炸得不到释放造成Chunk的可分配内存下降, 而保证只有一个
+可以满足Arena分配内存的fast-path(避免重新在Chunk中分配).
+
+### ChunkList中内存的释放
+```java
+boolean free(PoolChunk<T> chunk, long handle, ByteBuffer nioBuffer) {
+    chunk.free(handle, nioBuffer);
+    if (chunk.usage() < minUsage) {
+        remove(chunk);
+        return move0(chunk);
+    }
+    return true;
+}
+
+private boolean move0(PoolChunk<T> chunk) {
+    if (prevList == null) {
+        // There is no previous PoolChunkList so return false which result in having the PoolChunk destroyed and
+        // all memory associated with the PoolChunk will be released.
+        assert chunk.usage() == 0;
+        return false;
+    }
+    return prevList.move(chunk);
+}
+
+private boolean move(PoolChunk<T> chunk) {
+    assert chunk.usage() < maxUsage;
+
+    if (chunk.usage() < minUsage) {
+        // Move the PoolChunk down the PoolChunkList linked-list.
+        return move0(chunk);
+    }
+
+    // PoolChunk fits into this PoolChunkList, adding it here.
+    add0(chunk);
+    return true;
+}
+```
+调用上述的Chunk释放内存的方法, 主要的逻辑是根据释放后Chunk的内存使用情况,将其下移至其他ChunkList.
+该方法的返回值:true代表Chunk不可释放,false代表`chunk.usage() == 0`
+
+### Arena中内存的释放
+```java
+void freeChunk(PoolChunk<T> chunk, long handle, SizeClass sizeClass, ByteBuffer nioBuffer, boolean finalizer) {
+    final boolean destroyChunk;
+    ...
+    if (destroyChunk) {
+        // 调用unsafe相关方法释放Chunk内存
+        destroyChunk(chunk);
+    }
+}
+```
+
+free单个PooledByteBuf
+```java
+void free(PoolChunk<T> chunk, ByteBuffer nioBuffer, long handle, int normCapacity, PoolThreadCache cache) {
+    if (chunk.unpooled) {
+        ...
+    } else {
+        SizeClass sizeClass = sizeClass(normCapacity);
+        if (cache != null && cache.add(this, chunk, nioBuffer, handle, normCapacity, sizeClass)) { 
+          // 调用线程本地缓存.将对应Chunk中handle对应的内存缓存起来不释放
+            return;
+        }
+
+        freeChunk(chunk, handle, sizeClass, nioBuffer, false);
+    }
+}
+
+/** PoolThreadCache#add **/
+boolean add(PoolArena<?> area, PoolChunk chunk, ByteBuffer nioBuffer,
+            long handle, int normCapacity, SizeClass sizeClass) {
+    MemoryRegionCache<?> cache = cache(area, normCapacity, sizeClass);
+    if (cache == null) {
+        return false;
+    }
+    return cache.add(chunk, nioBuffer, handle);
+}
+```
+
+## 总结
+以上就是Netty的内存分配以及回收代码的解读, 
+关于其中代码的细节部分可能会有很多解读不到位的地方, 欢迎各位在我的邮箱留言或者在github上提issue.
