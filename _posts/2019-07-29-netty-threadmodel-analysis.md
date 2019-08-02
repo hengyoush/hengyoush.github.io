@@ -31,7 +31,7 @@ categories: [netty]
 
 9. `SingleThreadEventLoop`: 继承自`SingleThreadEventExecutor`, 实现了`EventLoop`接口, 增加了注册channel的功能.
 
-10. `NioEventLoop`
+10. `NioEventLoop`: 继承自`SingleThreadEventLoop`, 实现了`SingleThreadEventExecutor`的run方法, 内含一个事件循环, 使用NIO selector执行IO任务和非IO任务.
 
 11. `AbstractEventExecutorGroup`
 
