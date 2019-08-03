@@ -33,13 +33,13 @@ categories: [netty]
 
 10. `NioEventLoop`: 继承自`SingleThreadEventLoop`, 实现了`SingleThreadEventExecutor`的run方法, 内含一个事件循环, 使用NIO selector执行IO任务和非IO任务.
 
-11. `AbstractEventExecutorGroup`
+11. `AbstractEventExecutorGroup`: 使用next方法委托给子EventExecutor执行相关方法.
 
-12. `MultithreadEventExecutorGroup`
+12. `MultithreadEventExecutorGroup`: 主要含有`EventExecutorChooser`, 是next方法具体执行的策略
 
-13. `MultithreadEventLoopGroup`
+13. `MultithreadEventLoopGroup`: 主要增加注册Channel的功能
 
-14. `NioEventLoopGroup`
+14. `NioEventLoopGroup`: 实现newChild方法, 构造子EventLoop, 即NioEventLoop.
 
 ## Reactor模式简介
 ![avatar](/static/img/netty-threadmodel-reactor.png)
