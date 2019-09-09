@@ -347,7 +347,9 @@ OS Page Cache中.
 
 值得一提的是, 在AllocateMappedFileService新建mappedFile到时候会根据是否开启warmMapedFileEnable
 这个选项来决定是否预先向FileChannel映射到ByteBuffer中写入数据来保证不发生缺页中断.(注意这里处理的是FileChannel的映射的
-逻辑地址而不是上面TransientStorePool的堆外内存的地址, TransientStorePool在创建池内的buffer的时候就已经处理过了)
+逻辑地址而不是上面TransientStorePool的堆外内存的地址, TransientStorePool在创建池内的buffer的时候就已经处理过了),
+因为mmap只是创建了逻辑地址到磁盘文件到映射关系, 真正的从磁盘copy到内核缓冲区还没有进行, 需要等到实际对mmap映射到逻辑地址进行读写时
+才会发生缺页中断, 去磁盘中copy, 所以这里预先在每个页大小写入一个字节就是为了提前将数据装入物理内存而不会在运行时发生缺页中断.
 
 ### 消息append
 入口代码在MappedFile.java的appendMessagesInner方法中:
@@ -499,9 +501,11 @@ protected void commit0(final int commitLeastPages) {
             // 此处确实如我所料, 将上次commit的pos到wrotePos之间的数据写入到FileChannel中
             byteBuffer.position(lastCommittedPosition);
             byteBuffer.limit(writePos);
-            // 相比写入mappedByteBuffer, 直接写入FileChannel更直接一些
-            // 虽然都需要flush到磁盘
-            // 应该是对性能有所提升吧
+            // 这里使用FileChannel的write写入,实际上是
+            // 系统调用, 只不过由于刷盘的条件以满足脏数据大小大于4页
+            // 为什么要与读的mappedByteBuffer分离? 这是为了实现一种读写分离的机制:
+            // 即读使用PageCache, 写先写入堆外内存, 然后再以一定间隔频率写入PageCache, 而不是
+            // 每次刷盘都写入PageCache, 这样会造成PageCache繁忙(对PageCache具体造成什么影响暂时还不清楚)
             this.fileChannel.position(lastCommittedPosition);
             this.fileChannel.write(byteBuffer);
             this.committedPosition.set(writePos);
