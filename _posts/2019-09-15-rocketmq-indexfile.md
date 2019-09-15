@@ -53,6 +53,7 @@ int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;
 ```
 
 2. 确定本次要插入的位置, 可以看到, 插入位置是不断在IndexFile的尾部进行append.
+
 ```java
 int absIndexPos =
       IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
