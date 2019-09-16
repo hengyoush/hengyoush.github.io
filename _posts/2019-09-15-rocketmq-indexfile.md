@@ -61,6 +61,7 @@ int absIndexPos =
 ```
 
 3. 进行插入
+
 ```java
 // hash
 this.mappedByteBuffer.putInt(absIndexPos, keyHash);
@@ -83,6 +84,7 @@ this.mappedByteBuffer.putInt(absSlotPos, this.indexHeader.getIndexCount());
 - end: 查找该时间戳以前的消息
 
 1. 首先确定key的hash值并且根据hashSlot找到该hash值对应的最新的IndexItem的位置.
+
 ```java
 int keyHash = indexKeyHashMethod(key);
 int slotPos = keyHash % this.hashSlotNum;
@@ -90,6 +92,7 @@ int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;
 ```
 
 2. 根据prevIndex组成的链式结构, 将符合条件的消息的物理位移加入到结果中
+
 ```java
 int absIndexPos =
       IndexHeader.INDEX_HEADER_SIZE + this.hashSlotNum * hashSlotSize
