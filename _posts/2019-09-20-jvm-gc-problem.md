@@ -1,11 +1,17 @@
-CIA线上GC问题排查
-当出现线上GC问题时处理步骤：
+---
+layout: post
+title:  "线上GC问题排查"
+date:   2019-09-20 20:02:00 +0700
+categories: [jvm]
+---
+
+## 出现线上GC问题时处理步骤：
 1.	首先保护现场，使用jstack和jmap相关命令将堆栈信息导出以备分析。
 2.	然后如有需要重启服务。
 3.	使用MemoryAnalyzer等工具进行问题的分析。
 保存堆栈信息相关命令介绍
 jstat 解释：可以使用jstat命令查看指定JVM的多项统计信息，在GC问题排查中较为常用的是jstat -gcutils. 如下所示：
- 
+
 •	S0: 年轻代中第一个survivor（幸存区）已使用的占当前容量百分比
 •	S1: 年轻代中第二个survivor（幸存区）已使用的占当前容量百分比
 •	E: 年轻代中Eden（伊甸园）已使用的占当前容量百分比
@@ -16,6 +22,7 @@ jstat 解释：可以使用jstat命令查看指定JVM的多项统计信息，在
 •	FGC: 从应用程序启动到采样时old代(全gc)gc次数
 •	FGCT: 从应用程序启动到采样时old代(全gc)gc所用时间(s)
 •	GCT: 从应用程序启动到采样时gc用的总时间(s)
+
 jmap -histo pid 打印出指定JVM堆的对象直方图，如下所示：（也可以使用-histo:live，只统计存活的对象）
  
 
@@ -46,7 +53,7 @@ id和两个date属性，正好符合直方图中的数据（43W * 2 = 86W），�
 解决方案：将最大缓存数量由原先的10000调整至500，并且考虑删除该缓存。
 调整之后，GC情况正常。
 
-PermGen耗尽造成的频繁GC
+## PermGen耗尽造成的频繁GC
 报警发现PermGen周期性增长然后到达最大值接着GC回收然后周而复始。
 
 首先查看直方图，发现并无明显异常，且不是由于堆耗尽造成的GC，而是由于永久代耗尽
@@ -69,6 +76,7 @@ HttpServletRequest req = Mockito.mock(HttpServletRequest.class);
 
 附录：
 造成永久代不断增长的mockito代码：
+```java
 // SearchingClassLoader.java
 private static ClassLoader combine(List<ClassLoader> parentLoaders) {
     ClassLoader loader = parentLoaders.get(parentLoaders.size()-1);
@@ -95,7 +103,7 @@ if (gen == null) {
     getClassNameCache(loader).add(className);
     gen = ReflectUtils.defineClass(className, b, loader); // 加载类
 }
-
+```
 
 
 

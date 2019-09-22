@@ -1,9 +1,16 @@
+---
+layout: post
+title:  "K8s集群搭建步骤: 单master"
+date:   2019-09-20 20:02:00 +0700
+categories: [k8s]
+---
+
 K8s集群搭建步骤
-1 安装必要软件
+## 安装必要软件
 K8s的master和worker节点都需要安装如下软件：docker，kubeadm，kubelet，kubectl
 脚本如下所示：
-安装脚本  
-# 卸载旧版本
+卸载旧版本
+```
 yum remove -y docker \
 docker-client \
 docker-client-latest \
@@ -14,48 +21,68 @@ docker-logrotate \
 docker-selinux \
 docker-engine-selinux \
 docker-engine
+```
 
-# 设置 yum repository
+## 设置 yum repository
+```
 yum install -y yum-utils \
 device-mapper-persistent-data \
 lvm2
 yum-config-manager --add-repo http://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+```
 
-# 安装并启动 docker
+## 安装并启动 docker
+```
 yum install -y docker-ce-18.09.7 docker-ce-cli-18.09.7 containerd.io
 systemctl enable docker
 systemctl start docker
+```
 
-# 安装 nfs-utils
-# 必须先安装 nfs-utils 才能挂载 nfs 网络存储
+## 安装 nfs-utils
+必须先安装 nfs-utils 才能挂载 nfs 网络存储
+```
 yum install -y nfs-utils
+```
 
-# 关闭 防火墙
+## 关闭 防火墙
+```
 systemctl stop firewalld
 systemctl disable firewalld
+```
 
-# 关闭 SeLinux
+## 关闭 SeLinux
+```
 setenforce 0
 sed -i "s/SELINUX=enforcing/SELINUX=disabled/g" /etc/selinux/config
+```
 
-# 关闭 swap
+## 关闭 swap
+```
 swapoff -a
 yes | cp /etc/fstab /etc/fstab_bak
 cat /etc/fstab_bak |grep -v swap > /etc/fstab
+```
 
-# 修改 /etc/sysctl.conf
-# 如果有配置，则修改
+## 修改 /etc/sysctl.conf
+如果有配置，则修改
+```
 sed -i "s#^net.ipv4.ip_forward.*#net.ipv4.ip_forward=1#g"  /etc/sysctl.conf
 sed -i "s#^net.bridge.bridge-nf-call-ip6tables.*#net.bridge.bridge-nf-call-ip6tables=1#g"  /etc/sysctl.conf
 sed -i "s#^net.bridge.bridge-nf-call-iptables.*#net.bridge.bridge-nf-call-iptables=1#g"  /etc/sysctl.conf
-# 可能没有，追加
+```
+可能没有，追加
+```
 echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
 echo "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.conf
 echo "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.conf
-# 执行命令以应用
+```
+执行命令以应用
+```
 sysctl -p
+```
 
-# 配置K8S的yum源
+## 配置K8S的yum源
+```
 cat <<EOF > /etc/yum.repos.d/kubernetes.repo
 [kubernetes]
 name=Kubernetes
@@ -66,11 +93,13 @@ repo_gpgcheck=0
 gpgkey=http://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
        http://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
 EOF
+```
 
-# 卸载旧版本
+## 卸载旧版本
 yum remove -y kubelet kubeadm kubectl
 
-# 安装kubelet、kubeadm、kubectl
+## 安装kubelet、kubeadm、kubectl
+```
 yum install -y kubelet-1.15.3 kubeadm-1.15.3 kubectl-1.15.3
 
 # 修改docker Cgroup Driver为systemd
@@ -183,6 +212,8 @@ spec:
   type: NodePort
   selector:
     k8s-app: kubernetes-dashboard
+```
+
 如上，我们将dashboard的服务类型改为NodePort，这样它就可以直接由外部的port访问。
 我们配置了--token-ttl=43200设置token的失效时间。
 登录在浏览器中输入https://master_ip:30001即可访问，但是需要输入登录凭证，这里我们使用token登录，token配置如下。
@@ -190,6 +221,7 @@ spec:
 配置token
 接着我们需要配置一个用户来获取它的token，配置文件如下：
 配置kubectl  
+```
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -208,10 +240,10 @@ subjects:
 - kind: ServiceAccount
 name: admin-user
 namespace: kube-system
-
+```
 使用apply -f创建一个名为admin-user的ServiceAccount和角色之间的绑定关系。
 然后我们使用如下命令获取该用户的token：
-kubectl -n kube-system describe $(kubectl -n kube-system get secret -n kube-system -o name | grep admin-user) | grep token
+`kubectl -n kube-system describe $(kubectl -n kube-system get secret -n kube-system -o name | grep admin-user) | grep token`
 获取token后在dashboard的登录界面输入即可登录。
 
 配置reset
