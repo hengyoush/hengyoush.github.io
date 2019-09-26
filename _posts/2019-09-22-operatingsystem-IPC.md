@@ -115,9 +115,34 @@ leave_region:
 进程间同步的方法.
 
 首先我们抛出一个问题: producer/consumer问题, 我们使用sleep/wakeup的方案的代码如下:
+```c
+void producer(void)
+{
+    int item;
+    while(true) {
+        item = produce_item();
+        if(count == N) sleep(); // 2
+        insert_item(item);
+        if(count==1) wake(consumer); // 3
+    }
+}
 
+void consumer(void)
+{
+    int item;
+    while(true) {
+        if(count == 0) sleep(); // 1
+        item = remove_item();
+        count = count - 1;
+        if(count == N-1) wake(producer);
+        consume(item);
+    }
+}
+```
 
- 
+ 使用这种方式在某些情况下并不能正确将唤醒信号传达.考虑如下情况:
+ 当消费者在1处判断count为0, 进入sleep方法之前, producer完成生产尝试将信号传达
+ 给consumer, 但此时consumer并没有进入sleep, 故此处信号会丢失.
 
 
 
