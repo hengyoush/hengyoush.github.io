@@ -134,7 +134,7 @@ void consumer(void)
         if(count == 0) sleep(); // 1
         item = remove_item();
         count = count - 1;
-        if(count == N-1) wake(producer);
+        if(count == N-1) wake(producer); // 4
         consume(item);
     }
 }
@@ -143,6 +143,8 @@ void consumer(void)
  使用这种方式在某些情况下并不能正确将唤醒信号传达.考虑如下情况:
  当消费者在1处判断count为0, 进入sleep方法之前, producer完成生产尝试将信号传达
  给consumer, 但此时consumer并没有进入sleep, 故此处信号会丢失.
+
+ 同理2 和 4处也会出现同样的问题.
 
 
 
