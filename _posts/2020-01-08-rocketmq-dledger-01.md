@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Dledger中Candidate选举流程"
-date:   2019-01-08 22:20:00 +0700
+date:   2020-01-08 22:20:00 +0700
 categories: [rocketmq,raft]
 ---
 
