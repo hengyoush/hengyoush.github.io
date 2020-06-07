@@ -237,5 +237,5 @@ if (termPredicate(outofelection, new Vote(n.version, n.leader,
 ## 总结
 下面是流程图:
 
-![avatar](/static/img/types-of-mounts.png)
+![avatar](/static/img/选举流程.png)
 
