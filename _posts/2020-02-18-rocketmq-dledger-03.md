@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Dledger中日志追加流程详解"
+title:  "Dledger中日志追加流程概述"
 date:   2020-02-18 15:20:00 +0700
 categories: [rocketmq,raft]
 ---
