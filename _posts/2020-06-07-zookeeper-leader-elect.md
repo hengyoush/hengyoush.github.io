@@ -1,12 +1,12 @@
 ---
 layout: post
 title:  "Zookeeper Leader选举流程源码解读"
-date:   2020-02-18 15:20:00 +0700
-categories: [rocketmq,raft]
+date:   2020-06-01 15:20:00 +0700
+categories: [zookeeper]
 ---
 
 ## 学习目标
-搞清楚Zookeeper是如何实现ZAB协议的领导者选举、成员发现以及数据同步的.
+搞清楚Zookeeper是如何实现ZAB协议的领导者选举的.
 
 ## 源码分析
 废话不多说, 让我进入源码分析的环节.
