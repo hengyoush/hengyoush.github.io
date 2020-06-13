@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Rocketmq IndexFile源码解读"
+title:  "Rocketmq 消息消费过程源码分析"
 date:   2020-06-09 10:02:00 +0700
 categories: [rocketmq]
 ---
@@ -738,7 +738,7 @@ for (int i = 0; i < 100; i++) {
 
 producer.shutdown();
 ```
-上面是生产者的示例代码
+上面是生产者的示例代码  
 1: 循环100次,根据次数对10取模  
 2: 这里我们传入了一个MessageQueueSelector,表示MessageQueue的选择策略, 这里我们的选择策略是根据第三个参数orderId, 使用orderId对队列数进行取模运算.  
 3: select方法中的第三个参数
@@ -892,10 +892,10 @@ if (BROADCASTING || processQueue.isLocked) {
     continueConsume = ConsumeMessageOrderlyService.this.processConsumeResult(msgs, status, context, this); // @4
 }
 ```
-1: 获取线程池内线程的队列锁
-2: 从ProcessQueue中获取消息并且将消息放到consumingMsgOrderlyTreeMap中
-3: 消费消息
-4: 对消费结果进行处理
+1: 获取线程池内线程的队列锁  
+2: 从ProcessQueue中获取消息并且将消息放到consumingMsgOrderlyTreeMap中  
+3: 消费消息  
+4: 对消费结果进行处理  
 
 为什么要将正在消费的消息放到consumingMsgOrderlyTreeMap中呢?  
 因为这样方便回滚,即将consumingMsgOrderlyTreeMap再put回msgTreeMap中.  
@@ -930,6 +930,154 @@ if (commitOffset >= 0 && !consumeRequest.getProcessQueue().isDropped()) { // @4
 4: 提交消费进度
 
 ### 定时消息
+上面说到, 当普通消息消费失败时, 会将消费失败的消息重新发往broker:
+```java
+this.defaultMQPushConsumerImpl.sendMessageBack(msg, delayLevel, context.getMessageQueue().getBrokerName());
+```
+delayLevel小于0代表不延迟,直接进入DLQ,等于0代表由broker端控制延迟,大于0代表由客户端控制,这里为0,表示由broker控制延迟.
+
+对应的RequestCode时RequestCode.CONSUMER_SEND_MSG_BACK, 让我们来看broker端是如何处理的:
+代码在SendMessageProcessor#processRequest中:
+
+```java
+processRequest(ChannelHandlerContext ctx, RemotingCommand request)
+    consumerSendMsgBack(ctx, request)
+        String newTopic = MixAll.getRetryTopic(requestHeader.getGroup()); // @1
+        MessageExt msgExt = this.brokerController.getMessageStore().lookMessageByOffset(requestHeader.getOffset()); // @2
+        if (msgExt.getReconsumeTimes() >= maxReconsumeTimes || delayLevel < 0) { // @3
+            // 进入DLQ
+        } else { // @4
+            if (0 == delayLevel) {
+                    delayLevel = 3 + msgExt.getReconsumeTimes();
+            }
+        }
+        MessageExtBrokerInner msgInner = new MessageExtBrokerInner(); // @5
+        msgInner.setTopic(newTopic);
+        msgInner.setReconsumeTimes(msgExt.getReconsumeTimes() + 1);
+        // set body,queueId,originmsgId etc
+        PutMessageResult putMessageResult = this.brokerController.getMessageStore().putMessage(msgInner); // @6
+```
+1: 根据消费组创建该消费组的重试主题, 这里可以看出重试主题是以消费组为单位创建的.  
+2: 从commitLog中得到实际的消息, 这里会存放重新消费的次数.  
+3: 如果最大重试次数超过重试次数阈值(默认16次)或者客户端传来的delayLevel小于0,代表将要进入DLQ.  
+4: 否则根据客户端传来的delayLevel是否大于0,如果是,代表由客户端控制延迟时间,否则将reconsumeTimes加3获得延迟.这里可以看到
+如果是0的话即第一次重试会delayLevel的值是3.  
+ "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h"  
+ 这是rocketMQ支持的延迟消费的时间,delayLevel值是3的对应的是10s.
+5: 创建新的消息,设置topic为重试主题,以及将重新消费次数加一
+6: 最后,将其存储到commitLog中.
+
+下面我们分析延迟消息是如何存储以及再次消费的.在putMessage中会对消息的延迟等级做判断,如果大于0说明是延迟消息,需要做特殊处理.
+
+```java
+if (msg.getDelayTimeLevel() > 0) {
+    topic = ScheduleMessageService.SCHEDULE_TOPIC; // SCHEDULE_TOPIC_XXXX
+    queueId = ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel()); // delayLevel - 1
+
+    MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
+    MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
+    msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
+
+    msg.setTopic(topic);
+    msg.setQueueId(queueId);
+}
+```
+关键代码如上,
+首先获取延迟消费的topic, 然后根据延迟等级获得queueId, 接着将原topic和queueId放入message的properties中,
+最后将延迟主题和队列id替换原来的.
+
+之后的代码就和之前的文章分析的类似的,此处就不再赘述. 
+
+既然我们根据延迟等级将消息放入延迟消费主题的不同的queue中,那么对于延迟消费主题来说应该有一个特殊的线程去将
+不同队列的消息以一定的时间间隔将原topic和queueId还原并且放入到ConsumeQueue中.
+
+下面我们就来分析ScheduleMessageService:
+首先来看它的重要的属性:
+```java
+    private final ConcurrentMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
+        new ConcurrentHashMap<Integer, Long>(32);
+```
+delayLevelTabley用来存放延迟等级和延迟时间对应的关系.  
+
+下面我们来看ScheduleMessageService是如何启动的.
+```java
+public void start() {
+    if (started.compareAndSet(false, true)) {
+        this.timer = new Timer("ScheduleMessageTimerThread", true);
+        for (Map.Entry<Integer, Long> entry : this.delayLevelTable.entrySet()) { // @1
+            Integer level = entry.getKey();
+            Long timeDelay = entry.getValue();
+            Long offset = this.offsetTable.get(level); // @2
+            if (null == offset) {
+                offset = 0L;
+            }
+
+            if (timeDelay != null) {
+                this.timer.schedule(new DeliverDelayedMessageTimerTask(level, offset), FIRST_DELAY_TIME); // @3
+            }
+        }
+
+        this.timer.scheduleAtFixedRate(new TimerTask() { // @4
+            @Override
+            public void run() {
+                try {
+                    if (started.get()) ScheduleMessageService.this.persist();
+                } catch (Throwable e) {
+                    log.error("scheduleAtFixedRate flush exception", e);
+                }
+            }
+        }, 10000, this.defaultMessageStore.getMessageStoreConfig().getFlushDelayOffsetInterval());
+    }
+}
+```
+1: 遍历延迟等级  
+2: 对每个延迟等级也即每个延迟主题下的队列, 去取上次处理到的offset  
+3: 使用定时器, 定时执行DeliverDelayedMessageTimerTask, 注意此处并没有类似scheduleAtFixDelay这种, 所以猜测DeliverDelayedMessageTimerTask一定有再次调度的方法.  
+4: 定时持久化进度到磁盘上  
+
+可以知道主要逻辑都在DeliverDelayedMessageTimerTask中, 所以我们来看DeliverDelayedMessageTimerTask的处理逻辑:
+
+```java
+ConsumeQueue cq =
+    ScheduleMessageService.this.defaultMessageStore.findConsumeQueue(SCHEDULE_TOPIC, // @1
+            delayLevel2QueueId(delayLevel));
+SelectMappedBufferResult bufferCQ = cq.getIndexBuffer(this.offset);
+for (; i < bufferCQ.getSize(); i += ConsumeQueue.CQ_STORE_UNIT_SIZE) {
+    long offsetPy = bufferCQ.getByteBuffer().getLong();
+    int sizePy = bufferCQ.getByteBuffer().getInt();
+    long tagsCode = bufferCQ.getByteBuffer().getLong(); // @2 
+    long deliverTimestamp = this.correctDeliverTimestamp(now, tagsCode); // @3
+    nextOffset = offset + (i / ConsumeQueue.CQ_STORE_UNIT_SIZE);
+    long countdown = deliverTimestamp - now; // @4
+    if (countdown <= 0) {
+        // @5
+    } else { // @6
+        ScheduleMessageService.this.timer.schedule(
+            new DeliverDelayedMessageTimerTask(this.delayLevel, nextOffset),
+            countdown);
+        ScheduleMessageService.this.updateOffset(this.delayLevel, nextOffset);
+    }
+}
+```
+1: 根据topic和延迟等级找到对应的ConsumeQueue  
+2: 遍历ConsumeQueue条目, 注意这里的tagsCode, 在延迟消息的情况下,分发到ConsumeQueue时这里做了一个“手脚“,即将tagsCode存储为:storeTimeStamp + delayTime,消息存储到CommitLog的时间戳 + 延迟时间.  
+3: 判断now + delayTime和理论上需要分发的时间的大小, (这块没看懂...)  
+4: 判断距离分发时间还有多长时间  
+5: 如果已经到了分发时间了,那么开始分发  
+6: 还没到,那么创建一个新的分发任务,在countdown后执行.  
+
+上述步骤中开始分发意味着我们要将该消息原来的topic和queueId还原,然后重新放入到CommitLog中一次.  
+```java
+MessageExt msgExt = defaultMessageStore.lookMessageByOffset; // @1
+MessageExtBrokerInner msgInner = this.messageTimeup(msgExt);  // @2
+messageStore.putMessage(msgInner); // @3
+```
+1: 从CommitLog中根据物理位移和消息大小取出消息  
+2: 将message中的queue和queueId还原  
+3: 重新投递到commitLog中  
+
+重新放入到CommitLog中去也就意味着回分发到ConsumeQUeue中,这时消费者就可以消费到延迟消费的消息了.
 
 ## 总结
 流程图
+![avatar](/static/img/消息消费流程.png)
