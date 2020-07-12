@@ -191,12 +191,15 @@ peerLastZxid: follower的最大zxid,这个zxid是日志中的,可能是没有提
 if (lastProcessedZxid == peerLastZxid) {
     queueOpPacket(Leader.DIFF, peerLastZxid);
 } else if (peerLastZxid > maxCommittedLog && !isPeerNewEpochZxid) {
+    // 对应单TRUNC,不会发送额外的packet
     queueOpPacket(Leader.TRUNC, maxCommittedLog);
     currentZxid = maxCommittedLog;
 } else if ((maxCommittedLog >= peerLastZxid) && (minCommittedLog <= peerLastZxid)) {
+    // 对应DIFF或者TRUNC+packets
     Iterator<Proposal> itr = db.getCommittedLog().iterator();
     currentZxid = queueCommittedProposals(itr, peerLastZxid,null, maxCommittedLog);
 } else if (peerLastZxid < minCommittedLog && txnLogSyncEnabled) {
+    // 对应DIFF/SNAP
     long sizeLimit = db.calculateTxnLogSizeLimit();
     Iterator<Proposal> txnLogItr = db.getProposalsFromTxnLog(
                         peerLastZxid, sizeLimit);
@@ -211,26 +214,32 @@ if (lastProcessedZxid == peerLastZxid) {
         snap = true;
     }
 }
+leaderLastZxid = leader.startForwarding(this, currentZxid);
 ```
+startForwarding的作用是当这个follower是比较后来的,那么需要把当前toBeApplied(已被提交的但还没被应用到dataTree的proposal)
+和outstandingProposals(还没被提交的proposal)的消息补发给这个follower.
+
 对应上面的几种情况, 接下里我们对FOLLOWER端进行分析:
 
 queueCommittedProposals代码:
 ```java
 long prevProposalZxid = -1;
+long queuedZxid = peerLastZxid;
 while (itr.hasNext()) {
     Proposal propose = itr.next();
     long packetZxid = propose.packet.getZxid();
-                // abort if we hit the limit
+    // abort if we hit the limit
     if ((maxZxid != null) && (packetZxid > maxZxid)) {
         break;
     }
-        // skip the proposals the peer already has
+        // 这个proposal follower已经有了,继续下一条
     if (packetZxid < peerLastZxid) {
         prevProposalZxid = packetZxid;
         continue;
     }
 
     if (needOpPacket) {
+        // 说明之后掉事务都需要同步
         if (packetZxid == peerLastZxid) {
             queueOpPacket(Leader.DIFF, lastCommittedZxid);
             needOpPacket = false;
@@ -241,13 +250,21 @@ while (itr.hasNext()) {
             queueOpPacket(Leader.DIFF, lastCommittedZxid);
             needOpPacket = false;
         } else if (packetZxid > peerLastZxid  ) {
-            // Peer have some proposals that the leader hasn't seen yet
-            // it may used to be a leader
+            if (ZxidUtils.getEpochFromZxid(packetZxid) !=
+                    ZxidUtils.getEpochFromZxid(peerLastZxid)) {
+                // epoch不同,不能trunc https://issues.apache.org/jira/projects/ZOOKEEPER/issues/ZOOKEEPER-3607?filter=allopenissues
+                LOG.warn("Cannot send TRUNC to peer sid: " + getSid() +
+                            " peer zxid is from different epoch" );
+                return queuedZxid;
+            }
+            // 代表这个提交follower 有,但是leader没有,从上一个大家都有的开始truncate
             queueOpPacket(Leader.TRUNC, prevProposalZxid);
             needOpPacket = false;
         }
     }
+    // 发送proposal
     queuePacket(propose.packet);
+    // 发送commit
     queueOpPacket(Leader.COMMIT, packetZxid);
     queuedZxid = packetZxid;
 }

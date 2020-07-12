@@ -1,0 +1,81 @@
+{
+  "main": {
+    "id": "7189e35ae53f852c",
+    "type": "split",
+    "children": [
+      {
+        "id": "70bbeb17a65971a3",
+        "type": "leaf",
+        "active": true,
+        "state": {
+          "type": "markdown",
+          "state": {
+            "file": "2020-06-09-rocketmq-messageconsume.md",
+            "mode": "source"
+          }
+        }
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "ba47f6190fa9bd89",
+    "type": "split",
+    "children": [
+      {
+        "id": "f2e3c277ca428265",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a2dab35a2c9a0b4d",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {}
+            }
+          },
+          {
+            "id": "aaa267d6dea5a481",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "4936d0df353310fe",
+    "type": "split",
+    "children": [
+      {
+        "id": "da203c7b3ad7a2fe",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "0125f503e0b9206d",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "lastOpenFiles": [
+    "2020-06-09-rocketmq-messageconsume.md",
+    "2020-06-13-zookeeper-datasync.md",
+    "Untitled.md",
+    "2022-06-23-kafka-study.md",
+    "2019-10-06-jdk-stream-sa.md"
+  ]
+}
