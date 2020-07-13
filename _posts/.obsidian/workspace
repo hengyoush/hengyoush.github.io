@@ -10,8 +10,19 @@
         "state": {
           "type": "markdown",
           "state": {
-            "file": "2020-06-09-rocketmq-messageconsume.md",
+            "file": "2022-06-23-kafka-broker-request-process.md",
             "mode": "source"
+          }
+        }
+      },
+      {
+        "id": "f2d7246c10dde591",
+        "type": "leaf",
+        "state": {
+          "type": "markdown",
+          "state": {
+            "file": "2022-06-23-kafka-broker-request-process.md",
+            "mode": "preview"
           }
         }
       }
@@ -46,7 +57,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 300,
+    "collapsed": true
   },
   "right": {
     "id": "4936d0df353310fe",
@@ -72,10 +84,10 @@
     "collapsed": true
   },
   "lastOpenFiles": [
+    "2022-06-23-kafka-broker-request-process.md",
     "2020-06-09-rocketmq-messageconsume.md",
     "2020-06-13-zookeeper-datasync.md",
     "Untitled.md",
-    "2022-06-23-kafka-study.md",
-    "2019-10-06-jdk-stream-sa.md"
+    "2022-06-23-kafka-study.md"
   ]
 }
