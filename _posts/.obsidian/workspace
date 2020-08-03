@@ -10,7 +10,7 @@
         "state": {
           "type": "markdown",
           "state": {
-            "file": "2022-07-27 mosn请求流程笔记.md",
+            "file": "2020-08-02-zookeeper-request-handle.md",
             "mode": "preview"
           }
         }
@@ -72,10 +72,10 @@
     "collapsed": true
   },
   "lastOpenFiles": [
-    "2022-06-23-kafka-study 1.md",
-    "2022-06-23-kafka-study.md",
-    "2022-06-23-kafka-broker-request-process.md",
-    "2020-06-09-rocketmq-messageconsume.md",
-    "2020-06-13-zookeeper-datasync.md"
+    "2020-08-02-zookeeper-request-handle.md",
+    "2020-06-13-zookeeper-datasync.md",
+    "2020-06-07-zookeeper-leader-elect.md",
+    "2020-06-13-zookeeper-datasync 1.md",
+    "2020-06-09-rocketmq-messageconsume.md"
   ]
 }
