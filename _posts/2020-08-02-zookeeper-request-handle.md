@@ -9,7 +9,7 @@ categories: [zookeeper]
 对于Zk来说,除了Leader选举和成员发现、数据同步之外,更重要的是ZK在正常状态:原子广播模式下的运作,
 所以这篇文章力求搞清楚Zk是如何处理客户端请求的,我们主要以setData为例.
 
-## temp
+## 客户端网络
 #### 客户端连接初始化
 ```java
 new Zookeeper() // @1
@@ -99,6 +99,24 @@ Zookeeper.create()
 ```
 可以看到,实际上就是把请求加入到ongoingQueue中
 
+#### eventThread
+在之前readResponse流程中,我们知道,对于异步请求来说,响应会调用eventThread的queuePacket方法:
+[[2020-08-02-zookeeper-request-handle#SendThread的readResponse]]
+实际上eventThread中有一个队列waitingEvents,里面会存放返回的响应Packet,所以queuePacket实际上将Packet入队.
+然后eventThread本身也是个线程,我们看它的运行主逻辑:
+```java
+while (true) {
+  Object event = waitingEvents.take(); // @1
+  processEvent(event); // @2
+  ...
+	  if (p.response instanceof Create2Response) {
+		cb.processResult()
+	  }
+}
+```
+1. 从waitingEvents出队
+2. 根据不同请求的响应进行callback的调用.
+
 #### 同步API--create
 ```java
 Zookeeper.create()
@@ -151,6 +169,96 @@ Zookeeper.create()
 2. 如果我们还在读取len的话,就调用readLength方法将incomingBuffer方法切换为读取消息体的buffer.
 3. 如果我们还在一开始的初始化阶段(初始化的时候会发送建立session的请求[[2020-08-02-zookeeper-request-handle#客户端连接初始化|]])
 4. 如果是正常的响应消息的话,会从incomingBuffer中读取响应,这里会调用sendThread的readResponse方法,见:[[2020-08-02-zookeeper-request-handle#SendThread的readResponse]],接下来清理lenBuffer,将incomingBuffer重新设置为lenBuffer.
+
+## 服务端请求处理
+#### 网络请求处理
+NettyServerCnxnFactory.java
+```java
+void channelActive()
+  NettyServerCnxn cnxn = new NettyServerCnxn()
+  ctx.channel().attr(CONNECTION_ATTRIBUTE).set(cnxn); // @1
+```
+关于Netty如何建立服务端我们不再赘述,让我们直接看要点.
+1. 在netty的channelActive方法中代表一个连接的新建,这里每建立一个新的连接都会创建一个NettyServerCnxn,然后将它与channel关联起来,为后续的channelRead作准备
+
+下面看channelRead:
+```java
+void channelRead()
+  NettyServerCnxn cnxn = ctx.channel().attr(CONNECTION_ATTRIBUTE).get(); // @1
+  cnxn.processMessage((ByteBuf) msg); // @2
+    NettyServerCnxn.receiveMessage(buf);
+	  ZooKeeperServer.processPacket(buf);
+	    ZooKeeperServer.submitRequest(Request);
+		  firstProcessor.processRequest(Request); // @3
+```
+1. 取出该channel关联的NettyServerCnxn
+2. 调用NettyServerCnxn的processMessage方法处理数据
+3. 最终由ZooKeeperServer中的firstProcessor进行请求的处理
+
+那么firstProcessor是在那里配置的呢?
+实际上对于Follower和Leader来说,Processor的配置是不一样的,但它们都是一个串起来的链所组成的形式.
+下面就来研究一下这个Processor链的处理过程.
+
+#### RequestProcessor处理链
+Request表示的是在RequestProcessor链中移动的请求,让我们来看它有哪些重要的字段:
+```java
+sessionId
+cxid
+type
+TxnHeader hdr
+zxid
+```
+
+PrepRequestProcessor的processRequest方法,将请求放在内部的submittedRequests阻塞队列中.
+```java
+public void processRequest(Request request) {
+	submittedRequests.add(request);
+}
+```
+它同时也是一个线程,它会从submittedRequests中取出请求,进行处理:
+```java
+while (true) {
+	Request request = submittedRequests.take();
+	if (Request.requestOfDeath == request) { // "毒丸"设计模式
+		break;
+	}
+	pRequest(request);
+}
+}
+```
+pRequest实际上根据request的type去做相应的处理,具体做什么处理呢,是将写请求加入到ZookeeperServer到outstandingChanges和outstandingChangesForPath属性中,我们举个例子来说吗这两个属性的作用:
+当session关闭时,需要清理该会话下的所有临时节点,但是实际场景下,closeSession请求处理之前如果已经有下面两类请求到达服务器并且正在处理:
+- 节点(包含临时与非临时)删除请求，删除的目标节点正好是上述临时节点中的一个。
+- 临时节点创建，修改请求，目标节点正好是上述临时节点中的一个。  
+
+对于第一类,由于我们closeSession请求的目的就是删除临时节点,所以到closeSession请求处理时会造成重复删除,所以我们将closeSession请求待删除列表中移除该节点.  
+对于第二类,我们将临时节点创建，修改请求对应的节点路径加入到待删除列表中.
+
+我们以create操作为例:
+```java
+pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true)
+  request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid, Time.currentWallTime(), type)); // @1
+  pRequest2TxnCreate(type, request, record, deserialize);
+    int newCversion = parentRecord.stat.getCversion()+1; // @2
+	request.setTxn(new CreateTxn(path, data, listACL, createMode.isEphemeral(),
+                    newCversion)); // @3 ?
+	parentRecord.childCount++; // @4
+	parentRecord.stat.setCversion(newCversion); 
+	addChangeRecord(parentRecord); // @5
+	  zks.outstandingChanges.add(c);
+	  zks.outstandingChangesForPath.put(c.path, c);
+	addChangeRecord(new ChangeRecord(request.getHdr().getZxid(), path, s, 0, listACL)); // @6
+```
+1. 设置事务头,包含sessionId、创建node时的zxid(即当前的zxid)、下一个zxid等
+2. 设置父节点等cversion自增
+3. 设置事务数据,包含本次创建等path和数据等
+4. 父节点等child数量自增同时更新cversion
+5. 将父节点改变记录加入到outstandingChanges中.
+6. 将节点改变记录加入到outstandingChanges中.
+
+FinalRequestProcessor:最后一个processor,将响应返回给客户端
+
+
 ## 总结
 下面是流程图:
 
