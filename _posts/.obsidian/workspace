@@ -23,7 +23,7 @@
     "type": "split",
     "children": [
       {
-        "id": "f2e3c277ca428265",
+        "id": "1a3463738dcb1b29",
         "type": "tabs",
         "children": [
           {
@@ -31,14 +31,6 @@
             "type": "leaf",
             "state": {
               "type": "file-explorer",
-              "state": {}
-            }
-          },
-          {
-            "id": "aaa267d6dea5a481",
-            "type": "leaf",
-            "state": {
-              "type": "search",
               "state": {}
             }
           }
@@ -53,14 +45,14 @@
     "type": "split",
     "children": [
       {
-        "id": "da203c7b3ad7a2fe",
+        "id": "14f39ffe365502dd",
         "type": "tabs",
         "children": [
           {
-            "id": "0125f503e0b9206d",
+            "id": "aaa267d6dea5a481",
             "type": "leaf",
             "state": {
-              "type": "backlink",
+              "type": "search",
               "state": {}
             }
           }
@@ -73,9 +65,9 @@
   },
   "lastOpenFiles": [
     "2020-08-02-zookeeper-request-handle.md",
-    "2020-06-13-zookeeper-datasync.md",
+    "2020-08-02-zookeeper-request-handle 1.md",
     "2022-06-23-kafka-broker-request-process.md",
-    "2020-02-17-rocketmq-dledger-02.md",
-    "2020-01-08-rocketmq-dledger-01.md"
+    "2020-06-13-zookeeper-datasync.md",
+    "2022-06-23-kafka-study.md"
   ]
 }

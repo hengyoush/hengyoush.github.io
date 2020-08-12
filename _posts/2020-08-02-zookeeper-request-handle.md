@@ -200,6 +200,23 @@ void channelRead()
 下面就来研究一下这个Processor链的处理过程.
 
 #### RequestProcessor处理链
+请求在Zk中是要经过RequestProcessor处理链的,处理链在Follower和Leader上是不同的,而且处理读请求与写请求之间也有细微的差别.
+关于RequestProcessor接口定义如下:
+```java
+void processRequest(Request request);
+void shutdown();
+```
+其中processRequest在RequestProcessor实现类中一般都是将请求放到实现类中的阻塞队列就OK了(除了FinalRequestProcessor和ToBeAppliedRequestProcessor).
+
+由于Follower上的处理流程比较简单,我们首先来看写请求在Follower上的处理流程.
+
+##### 写请求在Follower上的处理流程
+Follower上的RequestProcessor处理链为:
+![[Follower处理链.png]]
+其中SyncRequestProcessor主要处理来自Leader的Proposal,SendAck用来处理向Leader发送Proposal的响应.
+
+正常的提交到follower的请求走的是上面这个链路.
+
 Request表示的是在RequestProcessor链中移动的请求,让我们来看它有哪些重要的字段:
 ```java
 sessionId
@@ -208,7 +225,32 @@ type
 TxnHeader hdr
 zxid
 ```
+我们首先来看FollowerRequestProcessor:
 
+##### FollowerRequestProcessor
+FollowerRequestProcessor的processRequest就是将请求放到队列中就返回了,我们主要看它的run方法(FollowerRequestProcessor本身是一个线程)
+```java
+loop:
+  Request request = queuedRequests.take(); // @1
+  nextProcessor.processRequest(request); // @2
+  switch (request.type) {
+    case OpCode.create 
+	...
+	  zks.getFollower().request(request); // @3
+  }
+```
+1. 从内部的队列中取出一个请求
+2. 提交给下一个处理器进行处理,下一个处理器是Commit处理器,而Commit处理器的processRequest的实现也是提交到队列中,所以这一步是异步的.
+3. 如果是写请求,需要向Leader发送请求.
+
+接下来就到了Commit处理器,Commit处理器可能是最复杂的处理器了,我会对其进行详解.
+
+##### CommitProcessor
+
+
+
+我们首先来看PrepRequestProcessor
+##### PrepRequestProcessor
 PrepRequestProcessor的processRequest方法,将请求放在内部的submittedRequests阻塞队列中.
 ```java
 public void processRequest(Request request) {
@@ -256,8 +298,58 @@ pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true)
 5. 将父节点改变记录加入到outstandingChanges中.
 6. 将节点改变记录加入到outstandingChanges中.
 
-FinalRequestProcessor:最后一个processor,将响应返回给客户端
+##### SyncRequestProcessor
+负责把事务记录到磁盘中,在ZK里就是txnLog和snap,而且做了**group commit**的优化.
+只有将request代表的事务记录到磁盘中,才会继续往下传递request.
+下面是对SyncRequestProcessor源码上注释的翻译:
+```
+SyncRequestProcessor用于以下三个场景:
+1. Leader: 将request写到磁盘,并且转发给AckRequestProcessor,AckRequestProcessor的作用是回复一个ack给自己.
+2. Follower: 将request写到磁盘,并且转发给SendAckRequestProcessor,它将给Leader发送响应
+3. Observer: 将已提交的请求刷至磁盘,它的下一个processor是null,也就说它不会给Leader发送响应.
+```
+SyncRequestProcessor接收请求:
+```java
+public void processRequest(Request request) {
+	// request.addRQRec(">sync");
+	queuedRequests.add(request);
+}
+```
+该方法只有一行,将请求加入到queuedRequests队列中.
 
+SyncRequestProcessor主流程伪代码:
+```java
+loop:
+  si = queuedRequests.poll(); // @1
+  if si == null // @2
+    flush(toFlush)
+  zks.getZKDatabase().append(si) // @3
+  toFlush.add(si) // @4
+  if (toFlush.size() > 1000)  // @5
+    flush(toFlush);
+```
+1. 从queuedRequests中尝试取出一个请求
+2. 如果当前没有请求,说明我们很闲😄,这时候去flush
+3. 这一步实际上调用txnLog的append方法,将其写入日志中.注意这一步仅仅是write,并没有flush.另外只有写请求会append,读请求不会.
+4. 将请求加入待flush列表中.
+5. 如果等待flush的请求大于1000,那么进行flush,这一步实际上会将所有待flush的请求向后面的processor转发.
+
+##### FinalRequestProcessor
+FinalRequestProcessor:最后一个processor,将事务应用到DataTree中同时把响应返回给客户端.
+伪代码:
+```java
+processRequest:
+  zks.processTxn(request); // @1
+    dataTree.processTxn(hdr, txn);
+  if (request.isQuorum()) // @2
+    zks.getZKDatabase().addCommittedProposal(request);
+    zks.getZKDatabase().addCommittedProposal(request);
+  rsp = new CreateResponse(); // @3
+  cnxn.sendResponse(rsp)
+```
+1. 将request应用到dataTree中.
+2. 如果是写请求则需要加入到ZkDataBase维护的一个列表,这是用来`fast follower synchronization`的,关于这一点待补充
+3. 最后将请求处理的响应发给客户端.
 
 ## 总结
 下面是流程图:
