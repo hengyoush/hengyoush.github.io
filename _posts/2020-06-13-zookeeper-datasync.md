@@ -296,6 +296,7 @@ leader.waitForNewLeaderAck(getSid(), qp.getZxid());
 
 当大多数节点同步完成之后发送UPTODATE包,告诉FOLLOWER可以使用同步的数据了.
 
+### 数据同步的收尾--进入原子广播阶段
 接下来LearnerHandler开始根据FOLLOWER传来的包进行判断根据不同的类型进行不同的处理,开始进入原子广播阶段:
 ```java
 case Leader.ACK:

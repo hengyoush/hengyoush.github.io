@@ -171,7 +171,7 @@ Zookeeper.create()
 4. 如果是正常的响应消息的话,会从incomingBuffer中读取响应,这里会调用sendThread的readResponse方法,见:[[2020-08-02-zookeeper-request-handle#SendThread的readResponse]],接下来清理lenBuffer,将incomingBuffer重新设置为lenBuffer.
 
 ## 服务端请求处理
-#### 网络请求处理
+### 网络请求处理
 NettyServerCnxnFactory.java
 ```java
 void channelActive()
@@ -199,7 +199,7 @@ void channelRead()
 实际上对于Follower和Leader来说,Processor的配置是不一样的,但它们都是一个串起来的链所组成的形式.
 下面就来研究一下这个Processor链的处理过程.
 
-#### RequestProcessor处理链
+### RequestProcessor处理链
 请求在Zk中是要经过RequestProcessor处理链的,处理链在Follower和Leader上是不同的,而且处理读请求与写请求之间也有细微的差别.
 关于RequestProcessor接口定义如下:
 ```java
@@ -210,7 +210,7 @@ void shutdown();
 
 由于Follower上的处理流程比较简单,我们首先来看写请求在Follower上的处理流程.
 
-##### 写请求在Follower上的处理流程
+#### 写请求在Follower上的处理流程
 Follower上的RequestProcessor处理链为:
 ![[Follower处理链.png]]
 其中SyncRequestProcessor主要处理来自Leader的Proposal,SendAck用来处理向Leader发送Proposal的响应.
@@ -246,8 +246,110 @@ loop:
 接下来就到了Commit处理器,Commit处理器可能是最复杂的处理器了,我会对其进行详解.
 
 ##### CommitProcessor
+Zk为了保证最大化并发度但是又必须保证数据的一致性做出了以下约束:
+1. 读请求可以并发执行
+2. 读请求和写请求互斥
+3. 任何时候只能有**一个**写请求在处理
+我们可以在接下来的代码分析中看到zk是如何确保这几点的.
 
+首先请看下面的图:
+![[队列关系.png]]
+可以看到在CommitProcessor中有两个队列:queuedRequests和committedRequests,两个Request容器:nextPending和currentlyCommitting.  
+- queuedRequests的作用和之前的处理器一样,是为了异步执行解耦用的.
+- committedRequests用来存放由Leader发送的Commit请求,这里的Commit请求可能是别的follower的请求结果也可能就是当前Follower的.  
+- nextPending存放的是正在等待Leader回复Commit消息的request,在nextPending存在期间,zk是不会处理任何queuedRequests中的请求的.
+- currentlyCommitting.代表正在执行FInalRequestProcssor的请求,同样当currentlyCommitting不为空的时候也不允许其他请求执行.
 
+其流程大致如下:
+1. 首先由上一个处理器发来请求放到queuedRequests中
+2. CommitProcessor主线程判断当前是否可以执行请求,如果可以就从queue中拿出来请求.这里判断的标准是不能有任何正在等待提交或者等待处理已提交的请求(即判断nextPending和currentlyCommitting是否为空),如果存在,那么挂起执行线程直到其为空.
+3. 根据其是否是读请求,如果是读请求,直接进入下一个处理器,如果是写请求,则需要放到nextPending中等待FollowerRequestProcessor中提交给Leader的Proposed的commit响应[[2020-08-02-zookeeper-request-handle#FollowerRequestProcessor]]
+4. 由Leader返回的commit响应会放到committedRequests这个队列中,这一步会wakeup CommitProcessor的处理线程.注意这一步中的commit消息可能不是nextPending中等待的commit.
+5. 由committedRequests中取出commit消息与nextPending中等待的request尝试匹配,匹配的字段是cxid和sessionId,如果都相同则匹配否则不匹配
+6. 无论是否匹配,都会设置currentlyCommitting,如果匹配的话还需要清除nextPending
+7. 进入最后的Final处理器处理,主要是修改内存中的dataTree,这里可能会返回响应给客户端
+
+##### FinalRequestProcessor
+FinalRequestProcessor:最后一个processor,将事务应用到DataTree中同时把响应返回给客户端.
+伪代码:
+```java
+processRequest:
+  zks.processTxn(request); // @1
+    dataTree.processTxn(hdr, txn);
+  if (request.isQuorum()) // @2
+    zks.getZKDatabase().addCommittedProposal(request);
+    zks.getZKDatabase().addCommittedProposal(request);
+  rsp = new CreateResponse(); // @3
+  cnxn.sendResponse(rsp)
+```
+1. 将request应用到dataTree中.
+2. 如果是写请求则需要加入到ZkDataBase维护的一个列表,这是用来`fast follower synchronization`的,关于这一点待补充
+3. 最后将请求处理的响应发给客户端.
+
+关于Follower接收客户端请求的流程我们已经说完了,下面我们来分析Follower的第二条处理链,Sync -> SendAck.  
+先来看SyncRequestProcessor:
+##### SyncRequestProcessor
+Follower从什么地方进入到SyncRequestProcessor的呢?
+下面是进入的伪代码步骤:
+```java
+Follower#processPacket
+  case Leader.PROPOSAL:
+    FollowerZooKeeperServer.logRequest(hdr, txn);
+	  syncProcessor.processRequest(request);
+```
+可以看到,是在Follower接收到Leader发来的Proposal的时候才会进入Sync中.
+
+我们来看SyncRequestProcessor的主要功能是什么:  
+负责把事务记录到磁盘中,在ZK里就是txnLog和snap,而且做了**group commit**的优化.
+只有将request代表的事务记录到磁盘中,才会继续往下传递request.
+下面是对SyncRequestProcessor源码上注释的翻译:
+```
+SyncRequestProcessor用于以下三个场景:
+1. Leader: 将request写到磁盘,并且转发给AckRequestProcessor,AckRequestProcessor的作用是回复一个ack给自己.
+2. Follower: 将request写到磁盘,并且转发给SendAckRequestProcessor,它将给Leader发送响应
+3. Observer: 将已提交的请求刷至磁盘,它的下一个processor是null,也就说它不会给Leader发送响应.
+```
+SyncRequestProcessor接收请求:
+```java
+public void processRequest(Request request) {
+	// request.addRQRec(">sync");
+	queuedRequests.add(request);
+}
+```
+该方法只有一行,将请求加入到queuedRequests队列中.
+
+SyncRequestProcessor主流程伪代码:
+```java
+loop:
+  si = queuedRequests.poll(); // @1
+  if si == null // @2
+    flush(toFlush)
+  zks.getZKDatabase().append(si) // @3
+  toFlush.add(si) // @4
+  if (toFlush.size() > 1000)  // @5
+    flush(toFlush);
+```
+1. 从queuedRequests中尝试取出一个请求
+2. 如果当前没有请求,说明我们很闲😄,这时候去flush
+3. 这一步实际上调用txnLog的append方法,将其写入日志中.注意这一步仅仅是write,并没有flush.另外只有写请求会append,读请求不会.
+4. 将请求加入待flush列表中.
+5. 如果等待flush的请求大于1000,那么进行flush,这一步实际上会将所有待flush的请求向后面的processor转发.
+
+##### SendAckRequestProcessor
+这一步是Follower第二条链的最后一个处理器,看名字就能知道它的作用是向Leader发送确认消息.
+实际上代码确实这么简单:
+```java
+QuorumPacket qp = new QuorumPacket
+  learner.writePacket
+```
+
+#### 写请求在Leader上的处理流程
+在[[2020-08-02-zookeeper-request-handle#FollowerRequestProcessor]]的处理流程中我们可以看到,Follower会把请求发给Leader,而Leader会在[[2020-06-13-zookeeper-datasync#数据同步的收尾--进入原子广播阶段]]这里接收Follower的请求,我们来看submitLearnerRequest的伪代码:
+```java
+prepRequestProcessor.processRequest(request);
+```
+它只有一行代码,就是将我们的请求提交到了PrepRequestProcessor,在看PrepRequestProcessor之前,我们先把Leader的整个处理器链路给画出来.
+![[Leader处理链.png]]
 
 我们首先来看PrepRequestProcessor
 ##### PrepRequestProcessor
@@ -298,58 +400,8 @@ pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true)
 5. 将父节点改变记录加入到outstandingChanges中.
 6. 将节点改变记录加入到outstandingChanges中.
 
-##### SyncRequestProcessor
-负责把事务记录到磁盘中,在ZK里就是txnLog和snap,而且做了**group commit**的优化.
-只有将request代表的事务记录到磁盘中,才会继续往下传递request.
-下面是对SyncRequestProcessor源码上注释的翻译:
-```
-SyncRequestProcessor用于以下三个场景:
-1. Leader: 将request写到磁盘,并且转发给AckRequestProcessor,AckRequestProcessor的作用是回复一个ack给自己.
-2. Follower: 将request写到磁盘,并且转发给SendAckRequestProcessor,它将给Leader发送响应
-3. Observer: 将已提交的请求刷至磁盘,它的下一个processor是null,也就说它不会给Leader发送响应.
-```
-SyncRequestProcessor接收请求:
-```java
-public void processRequest(Request request) {
-	// request.addRQRec(">sync");
-	queuedRequests.add(request);
-}
-```
-该方法只有一行,将请求加入到queuedRequests队列中.
 
-SyncRequestProcessor主流程伪代码:
-```java
-loop:
-  si = queuedRequests.poll(); // @1
-  if si == null // @2
-    flush(toFlush)
-  zks.getZKDatabase().append(si) // @3
-  toFlush.add(si) // @4
-  if (toFlush.size() > 1000)  // @5
-    flush(toFlush);
-```
-1. 从queuedRequests中尝试取出一个请求
-2. 如果当前没有请求,说明我们很闲😄,这时候去flush
-3. 这一步实际上调用txnLog的append方法,将其写入日志中.注意这一步仅仅是write,并没有flush.另外只有写请求会append,读请求不会.
-4. 将请求加入待flush列表中.
-5. 如果等待flush的请求大于1000,那么进行flush,这一步实际上会将所有待flush的请求向后面的processor转发.
 
-##### FinalRequestProcessor
-FinalRequestProcessor:最后一个processor,将事务应用到DataTree中同时把响应返回给客户端.
-伪代码:
-```java
-processRequest:
-  zks.processTxn(request); // @1
-    dataTree.processTxn(hdr, txn);
-  if (request.isQuorum()) // @2
-    zks.getZKDatabase().addCommittedProposal(request);
-    zks.getZKDatabase().addCommittedProposal(request);
-  rsp = new CreateResponse(); // @3
-  cnxn.sendResponse(rsp)
-```
-1. 将request应用到dataTree中.
-2. 如果是写请求则需要加入到ZkDataBase维护的一个列表,这是用来`fast follower synchronization`的,关于这一点待补充
-3. 最后将请求处理的响应发给客户端.
 
 ## 总结
 下面是流程图:

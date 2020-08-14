@@ -4,7 +4,7 @@
     "type": "split",
     "children": [
       {
-        "id": "70bbeb17a65971a3",
+        "id": "1a016d96266af9c5",
         "type": "leaf",
         "active": true,
         "state": {
@@ -12,6 +12,17 @@
           "state": {
             "file": "2020-08-02-zookeeper-request-handle.md",
             "mode": "preview"
+          }
+        }
+      },
+      {
+        "id": "5b660065450aa315",
+        "type": "leaf",
+        "state": {
+          "type": "markdown",
+          "state": {
+            "file": "2020-06-13-zookeeper-datasync.md",
+            "mode": "source"
           }
         }
       }
@@ -38,7 +49,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 319,
+    "collapsed": true
   },
   "right": {
     "id": "4936d0df353310fe",
@@ -55,6 +67,14 @@
               "type": "search",
               "state": {}
             }
+          },
+          {
+            "id": "0916a9de334bc412",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {}
+            }
           }
         ]
       }
@@ -65,9 +85,9 @@
   },
   "lastOpenFiles": [
     "2020-08-02-zookeeper-request-handle.md",
-    "2020-08-02-zookeeper-request-handle 1.md",
-    "2022-06-23-kafka-broker-request-process.md",
     "2020-06-13-zookeeper-datasync.md",
-    "2022-06-23-kafka-study.md"
+    "2020-06-07-zookeeper-leader-elect.md",
+    "2020-08-13-design-of-unix-filesystem-systemcall 1.md",
+    "2020-08-13-design-of-unix-filesystem-systemcall.md"
   ]
 }
