@@ -95,7 +95,7 @@ while (isRunning) {
 1. 处理新的客户端连接,实际上去注册READ事件.
 2. 从responseQueue中取出response,如果是SendResponse的话,调用selector的send方法,将responseSend返回给client.
 3. 底层调用selector的poll方法,针对不同的SelectionKey做不同处理.  
-	- 对read事件,读取channel中的请求数据将其放入到selecor的completedReceives属性中,将channel置为mute状态.(参见:[[2022-06-23-kafka-broker-request-process#细节 处理client端请求的有序性是如何保证的]])
+	- 对read事件,读取channel中的请求数据将其放入到selecor的completedReceives属性中,将channel置为mute状态.(参见:[[2020-06-23-kafka-broker-request-process#细节 处理client端请求的有序性是如何保证的]])
 	- 对write事件,调用channel的write方法,将response写出.  
 4. 处理上一步中存放在selecor的completedReceives属性中的请求,调用requestChannel的sendRequest方法,将其放入到requestChannel的请求队列中.
 5. 这一步处理已经完成的发送响应,调用其回调方法,并且将client的channel置为unmute.

@@ -400,10 +400,74 @@ pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true)
 5. 将父节点改变记录加入到outstandingChanges中.
 6. 将节点改变记录加入到outstandingChanges中.
 
+##### ProposalRequestProcessor
+ProposalRequestProcessor的作用主要是对写请求会给follower发送提案获得大多数follower的ack后进行提交,它的代码也是直观的:
+```java
+nextProcessor.processRequest(request);
+if (request.getHdr() != null) {
+	// We need to sync and get consensus on any transactions
+	try {
+		zks.getLeader().propose(request);
+		  QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data);
+		  outstandingProposals.put(lastProposed, p);
+		  sendPacket(pp);
+	} catch (XidRolloverException e) {
+		throw new RequestProcessorException(e.getMessage(), e);
+	}
+	syncProcessor.processRequest(request);
+}
+```
+可以看到我们会首先将请求传递给下一个processor,而下一个processor实际上就是commitprocessor(见:[[2020-08-02-zookeeper-request-handle#CommitProcessor]]).
+同时在Leader的propose方法中除了发送请求之外还会将提案加入到outstandingProposals以便和后续的commit请求对应起来.
+对于写请求还会把它传递给SyncProcessor进行事务的持久化(见:[[2020-08-02-zookeeper-request-handle#SyncRequestProcessor]]).
 
+##### AckRequestProcessor
+AckRequestProcessor实际上就是Leader给自己的proposal返回ack的过程,代码过于简单就不详细说明了.
+```java
+QuorumPeer self = leader.self;
+if(self != null)
+	leader.processAck(self.getId(), request.zxid, null);
+```
+
+##### 提案ACK消息的处理
+上面我们说到了在ProposalRequestProcessor中我们会发送Proposal给Follower,我们来看Follower是如何处理的.
+使用伪代码描述流程如下:
+```java
+Follower.followLeader
+  while (this.isRunning()) {
+	readPacket(qp);
+	processPacket(qp);
+	  case Leader.PROPOSAL:
+	    // 反序列化...
+		syncProcessor.processRequest(request);
+  }
+```
+我们可以看到最后是由syncProcessor进行处理的,之前我们已经分析过Follower的第二条处理链的执行步骤了,这里就不赘述了,总之最后第二条链进入FInal处理器会发送Ack给Leader,让我们看Leader是在哪里处理的.
+
+```java
+LearnerHandler.run
+  ...
+  case Leader.ACK: // @1
+    leader.processAck
+	  Proposal p = outstandingProposals.get(zxid); // @2
+	  tryToCommit(p, zxid, followerAddr) 
+	    if (p.hasAllQuorums()) // @3
+		{
+		  outstandingProposals.remove(zxid); // @3.1
+		  toBeApplied.add(p); // @3.2
+		  zk.commitProcessor.commit(p.request); // @3.3
+		}
+```
+1. 在LeanerHandler线程中,接收到Follower的消息,判断是ACK的话进入到processAck的方法中
+2. 在这里我们从outstandingProposals中尝试获取到我们在ProposalRequestProcessor中设置进去的提案[[2020-08-02-zookeeper-request-handle#ProposalRequestProcessor]]
+3. 如果获得了大多数Follower的确认的才进入下面的步骤,否则直接返回
+	1. 从outstandingProposals移除提案
+	2. 加入提案到toBeApplied,toBeApplied代表已经提交但还没有应用到dataTree中的提案
+	3. 调用commitProcessor的commit方法,会与之前设置的nextPending做匹配,详细分析见:[[2020-08-02-zookeeper-request-handle#CommitProcessor]]
 
 
 ## 总结
-下面是流程图:
+以上就是zookeeper对于客户端请求的整体解读.
+我们首先看了客户端上如何发送请求给zookeeper server的,接着又看了server端的处理流程,重点分析了Follower和Leader的请求处理器链以及Follower与Leader之间的交互,可以看到ZAB协议的原子广播在这里的应用.
 
 

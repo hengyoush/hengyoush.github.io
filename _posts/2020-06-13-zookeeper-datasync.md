@@ -7,7 +7,7 @@ categories: [zookeeper]
 
 ## 学习目标
 当Zookeeper完成了成员选举之后, 接下来就是要实现成员当发现了, 对于zk来说, 选举并没有实现一个集群成员当确定,  
-因为zk当选举没有回复, 只有通过集群节点内部不断当"举荐“过程才能知道自己是Leader, 所以选举之后  
+因为zk当选举没有回复, 只有通过集群节点内部不断的"举荐“过程才能知道自己是Leader, 所以选举之后  
 第一件事情就是确定集群内的成员,然后进行数据的一致性修复.
 
 这里我们的学习目标就是搞清楚Zookeeper是如何实现ZAB协议的成员发现以及数据同步流程的.
@@ -180,10 +180,12 @@ peerLastZxid: follower的最大zxid,这个zxid是日志中的,可能是没有提
 ```
 其中maxCommittedLog和minCommittedLog是zk在内存中维护的一张链表,用于快速进行follower的日志同步.  
 有如下几种情况:
-1. lastProcessedZxid == peerLastZxid, 这种情况无需同步
-2. peerLastZxid > maxCommittedLog, 这种情况需要进行TRUNC,truncate到maxCommittedLog即可
-3. minCommittedLog <= peerLastZxid <= maxCommittedLog,直接使用zk中的链表进行DIFF同步
-4. peerLastZxid < minCommittedLog, 这时需要读取磁盘上的事务日志和内存中的链表进行DIFF同步或者采用SNAP方式进行同步
+1. lastProcessedZxid == peerLastZxid, 这种情况无需同步,因为dataTree中最新的zxid和follower的最新zxid相等,代表数据没有偏差
+2. peerLastZxid > maxCommittedLog, 说明follower上有脏数据这种情况需要进行TRUNC,truncate到maxCommittedLog即可
+3. minCommittedLog <= peerLastZxid <= maxCommittedLog,这种情况代表follower上缺少了一些事务,直接使用zk中的maxCommittedLog和minCommittedLog链表进行快速DIFF同步
+4. peerLastZxid < minCommittedLog, 代表follower落后的太多了,这时需要读取磁盘上的事务日志和内存中的链表进行DIFF同步或者采用SNAP方式进行同步
+
+要注意,在进行Follower的sync处理过程中,leader可能已经进入原子广播阶段了(因为NEWLEADER的ACK只需要大多数节点响应即可进入下一步),所以在最后发送的同步日志中也包含一些已提交但还没有应用到Leader的dataTree上的一些数据.(见[[2020-08-02-zookeeper-request-handle#提案ACK消息的处理]])
 
 ### 数据同步--DIFF、TRUNC还是SNAP?
 关键代码如下:
