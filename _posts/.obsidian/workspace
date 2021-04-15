@@ -10,7 +10,7 @@
         "state": {
           "type": "markdown",
           "state": {
-            "file": "2020-08-02-zookeeper-request-handle.md",
+            "file": "2021-04-14-java-volatile.md",
             "mode": "source"
           }
         }
@@ -53,7 +53,9 @@
             "type": "leaf",
             "state": {
               "type": "search",
-              "state": {}
+              "state": {
+                "query": ""
+              }
             }
           },
           {
@@ -61,7 +63,9 @@
             "type": "leaf",
             "state": {
               "type": "backlink",
-              "state": {}
+              "state": {
+                "file": "2021-04-14-java-volatile.md"
+              }
             }
           }
         ]
@@ -72,10 +76,15 @@
     "collapsed": true
   },
   "lastOpenFiles": [
+    "2021-04-14-java-volatile.md",
+    "2020-09-27-cpp-casts-note.md",
+    "2019-07-27-netty-memorypool-concept.md",
+    "2020-08-13-design-of-unix-filesystem-systemcall.md",
+    "2020-09-26-cpp-template-note.md",
+    "2020-07-27 mosn请求流程笔记.md",
     "2020-08-02-zookeeper-request-handle.md",
     "2022-07-27 mosn请求流程笔记.md",
     "2022-06-23-kafka-broker-request-process.md",
-    "2022-06-23-kafka-study.md",
-    "2020-06-13-zookeeper-datasync.md"
+    "2022-06-23-kafka-study.md"
   ]
 }
