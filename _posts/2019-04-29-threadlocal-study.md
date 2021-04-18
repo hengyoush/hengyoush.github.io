@@ -18,8 +18,12 @@ static class Entry extends WeakReference<ThreadLocal<?>> {
 	}
 }
 ```
-这就意味着如果ThreadLocal对象不再拥有强引用的情况下,会被GC回收掉,这样就防止了存放在ThreadLocal中影响GC.
-但是还是需要注意使用线程池的情况,及时remove释放掉,防止内存泄漏.
+为什么这里要使用WeakReference呢?
+- 当ThreadLocal不再被强引用时, 那么对应的ThreadLocalMap中的value也应该被清理掉, 由于threadLocal变量实际上是value的句柄,
+因此这里将ThreadLocal变量作为弱引用的对象, 在ThreadLocal的很多操作中都会对Entry.get方法返回null的情况做处理, 及时清理Entry数组
+中key为null的项.  
+但是还是需要注意使用线程池的情况,因为线程池下的线程会长时间存在, 因此不用的ThreadLocal变量应该及时remove释放掉,防止内存泄漏.  
+对于单个线程很快被回收的情况,它的ThreadLocalMap也会被GC, 所以对于remove操作的需求没有线程池情况下那么强烈.
 
 下面我们看一下 **ThreadLocalMap** 的具体实现吧!
 
@@ -40,7 +44,7 @@ private Entry getEntry(ThreadLocal<?> key) {
 
 #### getEntryAfterMiss方法猜测
 getEntryAfterMiss方法必须根据线性探测法的特性向后寻找相等的key.
-回想起之前Entry继承了 **WeakReference** 这个事情,那么在Entry数组中一定存在着entry中的key为空的情况(即已经被回收),那么我们需要对这些 **stale slot**  进行清理,防止它们一直占用槽位.
+回想起之前Entry继承了 **WeakReference** 这个事情,那么在Entry数组中可能存在着entry被回收的情况,那么我们需要对这些 **stale slot**  进行清理,防止它们一直占用槽位.
 
 #### getEntryAfterMiss方法解析
 首先看下源码:
@@ -111,6 +115,14 @@ private void set(ThreadLocal<?> key, Object value) {
 其他的猜测都命中了,比如:resize, 查找到空槽来进行插入等.
 接下来我们看一下 **replaceStaleEntry** 的实现.
 
+case1:覆盖
+![avatar](/static/img/ThreadLocal-set-2.png)
+
+case3: 查找到空槽
+![avatar](/static/img/ThreadLocal-set-1.png)
+
+对于case2: 清除过期entry的示意图在后面详细解析相关方法的时候再展示.	
+
 #### replaceStaleEntry解析
 ```java
 private void replaceStaleEntry(ThreadLocal<?> key, Object value,
@@ -163,7 +175,7 @@ private void replaceStaleEntry(ThreadLocal<?> key, Object value,
 }
 ```
 1. 首先从staleSlot向前查找直到null,获取第一个需要清理的slot索引,存放在slotToExpunge中,后面需要使用slotToExpunge进行清理.
-2. 开始从staleSlot向后查找,看是不是有和key相同的槽,如果在遍历中发现存在相同的槽,那么将其与Entry[staleSlot]中的entry进行交换,将那个相同的槽放到staleSlot对应的槽中,接着开始清理,return.
+2. 开始从staleSlot向后查找,看是不是有和key相同的槽,如果在遍历中发现存在key相同的槽,那么将其与Entry[staleSlot]中的entry进行交换,将那个相同的槽放到staleSlot对应的槽中,接着开始清理,return.
 3. 如果在循环中没有相同key的槽,那么新建一个Entry,将其放在staleSlot上.
 4. 清理返回
 
@@ -214,6 +226,9 @@ private int expungeStaleEntry(int staleSlot) {
 	2. 如果该槽没有stale,那么将其rehash(这一步十分关键,是为什么上面的查找步骤只要遇到null就结束查找的原因)
 3. 返回staleSlot之后的null slot.
 
+清理过期节点流程:
+![avatar](/static/img/ThreadLocal-set-3.png)
+
 #### cleanSomeSlots方法解析
 ```java
 private boolean cleanSomeSlots(int i, int n) {
@@ -233,7 +248,9 @@ private boolean cleanSomeSlots(int i, int n) {
 }
 ```
 对Entry数组进行扫描,找到stale slot进行expunge.
-具体是从i开始,扫描n对数个slot,如果在其中发现了stale slot,那么n会变成table.length.
+具体是从i开始,扫描n对数个slot,如果在其中发现了stale slot,那么n会变成table.length.  
+这里的思路是把n当成扫描的次数, 如果其中某次发现了存在过期节点, 说明可能还存在过期节点, 继续扫描(即将n重置为len),
+如果每次扫描发现没有过期就将n减半——即减少扫描次数.
 
 ##### 备注
 本文章基于JDK10分析
