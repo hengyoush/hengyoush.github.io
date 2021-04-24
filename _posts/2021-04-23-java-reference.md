@@ -114,6 +114,7 @@ size_t ReferenceProcessor::process_soft_ref_reconsider_work(DiscoveredList&    r
 1. 遍历DiscoveredList,对其中不符合回收标准的从列表中移除.
 2. 真正进行判断的地方,什么样的软引用符合回收的标准呢? 判断方式如下:
 JVM内部定义了几种策略,默认的是这种:
+
 ```c++
 // Capture state (of-the-VM) information needed to evaluate the policy
 void LRUMaxHeapPolicy::setup() {
